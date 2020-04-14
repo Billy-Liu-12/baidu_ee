@@ -94,8 +94,8 @@ class RnnModel(BaseModel):
         #     hidden = torch.reshape(hidden, (-1,hidden.shape[1], self.hidden_dim * self.n_layers))
         #     hidden = torch.mean(hidden,dim=0)
 
-        # out = self.fc(self.dropout(output))
-        out = self.fc(output)
+        out = self.fc(self.dropout(output))
+        # out = self.fc(output)
 
         return out
 

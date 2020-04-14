@@ -9,6 +9,7 @@ from base.base_trainer import BaseTrainer
 from utils.utils import inf_loop, MetricTracker
 from time import time
 import pylcs
+from utils.utils import extract_arguments
 
 class Trainer(BaseTrainer):
     """
@@ -96,7 +97,7 @@ class Trainer(BaseTrainer):
         for pred_tag,text, arguments in zip(batch_pred_tag,batch_text,batch_arguments):
 
             inv_arguments = {v: k for k, v in arguments.items()}
-            pred_arguments = self.extract_arguments(text,pred_tag)
+            pred_arguments = extract_arguments(text,pred_tag,self.schema)
             pred_inv_arguments = {v: k for k, v in pred_arguments.items()}
             Y += len(pred_inv_arguments)
             Z += len(inv_arguments)
@@ -106,7 +107,7 @@ class Trainer(BaseTrainer):
                     l = pylcs.lcs(v, inv_arguments[k])
                     X += 2. * l / (len(v) + len(inv_arguments[k]))
         # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
-        return  X,Y,Z
+        return X,Y,Z
 
     def extract_arguments(self,text,pred_tag):
         """arguments抽取函数

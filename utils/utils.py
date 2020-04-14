@@ -293,4 +293,4 @@ def extract_arguments(text, pred_tag,schema):
         else:
             starting = False
 
-    return {text[idx[0]:idx[-1]]: l for idx, l in arguments}
+    return {text[idx[0]:idx[-1]+1]: l for idx, l in arguments}

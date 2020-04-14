@@ -6,7 +6,7 @@
     "args": {
       "rnn_type": "lstm",
       "hidden_dim": 256,
-      "n_layers": 1,
+      "n_layers": 2,
       "bidirectional": true,
       "dropout": 0.5,
       "batch_first": true
@@ -84,7 +84,7 @@
     "save_period": 1,
     "verbosity": 2,
     "monitor": "min val_f1",
-    "early_stop": 0,
+    "early_stop": 5000,
     "tensorboard": true
   }
 }
