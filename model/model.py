@@ -53,7 +53,7 @@ class RnnModel(BaseModel):
         self.dropout = nn.Dropout(dropout)
         self.batch_first = batch_first
 
-    def prepare_pack_padded_sequence(self,inputs_words, seq_lengths, device="cpu", descending=True):
+    def prepare_pack_padded_sequence(self,inputs_words, seq_lengths, descending=True):
         """
         :param device:
         :param inputs_words:
@@ -62,8 +62,7 @@ class RnnModel(BaseModel):
         :return:
         """
         sorted_seq_lengths, indices = torch.sort(seq_lengths, descending=descending)
-        # if device != cpu_device:
-        #     sorted_seq_lengths, indices = sorted_seq_lengths.cuda(), indices.cuda()
+
         _, desorted_indices = torch.sort(indices, descending=False)
         sorted_inputs_words = inputs_words[indices]
         return sorted_inputs_words, sorted_seq_lengths, desorted_indices

@@ -245,7 +245,7 @@ def build_vocab(data_dir, train_file_name, valid_file_name, test_file_name, toke
 def build_word_embedding(vocab, embedding_size, word_embedding_path):
     vocab_size = len(vocab)
     vectors_ = np.random.normal(loc=0, scale=1, size=[vocab_size, embedding_size])
-    pretrained_word_embedding = word2vec.load(word_embedding_path,kind= "txt")
+    pretrained_word_embedding = word2vec.load(word_embedding_path, kind="txt")
     stoi, itos = {}, {}
     for idx, char in enumerate(vocab):
         stoi[char] = idx
@@ -273,3 +273,24 @@ def load_word_embedding(word_embedding_path, embedding_name, data_dir=None, trai
         save_word_embedding(word_embedding_dir=word_embedding_dir, embedding_name=embedding_name,
                             new_word_embedding=new_word_embedding)
         return new_word_embedding
+
+
+def extract_arguments(text, pred_tag,schema):
+    """arguments抽取函数
+    """
+    arguments, starting = [], False
+    for i, label in enumerate(pred_tag):
+        if label > 0:
+            if label % 2 == 1:
+                starting = True
+                index = schema.id2role[(label - 1) // 2].rfind('-')
+                arguments.append([[i], (
+                schema.id2role[(label - 1) // 2][:index], schema.id2role[(label - 1) // 2][index + 1:])])
+            elif starting:
+                arguments[-1][0].append(i)
+            else:
+                starting = False
+        else:
+            starting = False
+
+    return {text[idx[0]:idx[-1]]: l for idx, l in arguments}

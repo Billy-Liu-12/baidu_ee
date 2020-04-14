@@ -107,7 +107,7 @@ class EEDataset(Dataset):
                     self.word_embedding.stoi[token] if token in self.word_embedding.stoi else self.word_embedding.stoi[
                         'UNK'] for token in self.tokenizer(l['text'])]
 
-            examples.append(input_example)
+                examples.append(input_example)
         return examples
 
     def _load_dataset(self):
@@ -251,25 +251,27 @@ class EEDataset(Dataset):
         """
         test phrase: 序列标注：对文本中的论元进行序列标注
         """
+        ids = []
         seq_lens = []  # 记录每个句子的长度
         text_ids = []  # 训练数据text_token_id
         texts = [] # 原文本
         masks = [] # 统一长度，文本内容为1，非文本内容为0
-        max_seq_len = len(max(datas, key=lambda x: len(x[0]))[0])  # 该batch中句子的最大长度
+        max_seq_len = len(max(datas, key=lambda x: len(x.text_token_id)).text_token_id)  # 该batch中句子的最大长度
 
         for data in datas:
-            seq_len = len(data[0])
+            ids.append(data.id)
+            seq_len = len(data.text_token_id)  # 句子长度
             seq_lens.append(seq_len)
             mask = [1] * seq_len
 
-            texts.append(data[2])
-            text_ids.append(data[0] + [self.word_embedding.stoi['PAD']] * (max_seq_len - seq_len))  # 文本id
+            texts.append(data.text)
+            text_ids.append(data.text_token_id + [self.word_embedding.stoi['PAD']] * (max_seq_len - seq_len))  # 文本id
             masks.append(mask + [0] * (max_seq_len - seq_len))
 
         text_ids = torch.LongTensor(np.array(text_ids)).to(self.device)
         masks = torch.ByteTensor(np.array(masks)).to(self.device)
-
-        return text_ids,seq_lens,masks,texts
+        seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
+        return ids,text_ids,seq_lens,masks,texts
 
 if __name__ == '__main__':
     data_dir = '../data/raw_data/'

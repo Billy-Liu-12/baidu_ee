@@ -53,7 +53,7 @@ class Trainer(BaseTrainer):
 
             text_ids, seq_lens, masks,raw_text,raw_arguments,seq_tags = batch_data
 
-            output = self.model(text_ids, seq_lens).squeeze()
+            output = self.model(text_ids, seq_lens)
             loss = self.criterion(output, seq_tags)
             loss += -self.crf_model(emissions=output, mask=masks, tags=seq_tags)
 
@@ -141,7 +141,7 @@ class Trainer(BaseTrainer):
         with torch.no_grad():
             for batch_idx, batch_data in enumerate(self.valid_iter):
                 text_ids, seq_lens, masks,raw_text,raw_arguments,seq_tags = batch_data
-                output = self.model(text_ids, seq_lens).squeeze()
+                output = self.model(text_ids, seq_lens)
                 loss = self.criterion(output, seq_tags)
                 loss += -self.crf_model(emissions=output, mask=masks, tags=seq_tags)
 

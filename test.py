@@ -14,6 +14,8 @@ from parse_config import ConfigParser
 from utils import utils
 from model.torch_crf import CRF
 from torch.utils import data as data_loader
+from utils.utils import extract_arguments
+import json
 
 
 def main(config):
@@ -55,10 +57,35 @@ def main(config):
     total_loss = 0.0
     total_metrics = torch.zeros(len(metric_fns))
 
+    # inference
+    f_result = open('result.json','w',encoding='utf8')
+    schema = test_set.schema
     with torch.no_grad():
         for i, batch_data in enumerate(tqdm(test_dataloader)):
-            text_ids, seq_lens, masks, texts = batch_data
-            output = model(text_ids, seq_lens).squeeze()
+            ids,text_ids, seq_lens, masks, texts = batch_data
+            output = model(text_ids, seq_lens)
+
+            best_path = crf_model.decode(emissions=output, mask=masks)
+            for id,text,path in zip(ids,texts,best_path):
+                arguments = extract_arguments(text,pred_tag=path,schema=schema)
+                event_list = []
+                for k, v in arguments.items():
+                    event_list.append({
+                        'event_type': v[0],
+                        'arguments': [{
+                            'role': v[1],
+                            'argument': k
+                        }]
+                    })
+                res = {}
+                res['id'] = id
+                # res['text'] = text
+                res['event_list'] = event_list
+                l = json.dumps(res, ensure_ascii=False)
+                f_result.write(l+'\n')
+    f_result.close()
+
+
 
             # save inference result, or do something with output here
 
@@ -70,19 +97,19 @@ def main(config):
             # for i, metric in enumerate(metric_fns):
             #     total_metrics[i] += metric(output, target) * batch_size
 
-    n_samples = len(data_loader.sampler)
-    log = {'loss': total_loss / n_samples}
-    log.update({
-        met.__name__: total_metrics[i].item() / n_samples for i, met in enumerate(metric_fns)
-    })
-    logger.info(log)
+    # n_samples = len(data_loader.sampler)
+    # log = {'loss': total_loss / n_samples}
+    # log.update({
+    #     met.__name__: total_metrics[i].item() / n_samples for i, met in enumerate(metric_fns)
+    # })
+    # logger.info(log)
 
 
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='event extraction')
-    args.add_argument('-c', '--config', default=None, type=str,
+    args.add_argument('-c', '--config', default='configs/lstm_crf.json', type=str,
                       help='config file path (default: None)')
-    args.add_argument('-r', '--resume', default='saved/models/seqlabel/0414_162250/model_best.pth', type=str,
+    args.add_argument('-r', '--resume', default='saved/models/seq_label/0414_170016/model_best.pth', type=str,
                       help='path to latest checkpoint (default: None)')
     args.add_argument('-d', '--device', default='2', type=str,
                       help='indices of GPUs to enable (default: all)')
