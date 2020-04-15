@@ -5,10 +5,10 @@
     "type": "Bert",
     "args": {
       "bert_path": "data/pretrained_model/Bert_max-len-512",
-      "bert_train": true
+      "bert_train": false
     }
   },
-    "model_arch_crf": {
+  "model_arch_crf": {
     "type": "CRF",
     "args": {
       "batch_first": true
@@ -39,6 +39,7 @@
     "args": {
       "data_dir": "data/raw_data/",
       "file_name": "test1.json",
+      "bert_path": "data/pretrained_model/Bert_max-len-512",
       "use_tag": false,
       "schema_name": "event_schema.json"
     }
@@ -50,23 +51,11 @@
       "batch_size": 16
     }
   },
-  "word_embedding": {
-    "type": "load_word_embedding",
-    "args": {
-      "word_embedding_path": "data/word_embedding/sgns.sogou.char",
-      "embedding_name": "new",
-      "data_dir": "data/raw_data/",
-      "train_file_name": "train.json",
-      "valid_file_name": "valid.json",
-      "test_file_name": "test1.json"
-    }
-  },
-
-    "optimizer": {
+  "optimizer": {
     "type": "BertAdam",
     "args": {
-      "lr": 5e-4 ,
-      "warmup":0.05,
+      "lr": 5e-4,
+      "warmup": 0.05,
       "amsgrad": true
     }
   },

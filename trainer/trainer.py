@@ -109,24 +109,7 @@ class Trainer(BaseTrainer):
         # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
         return X,Y,Z
 
-    def extract_arguments(self,text,pred_tag):
-        """arguments抽取函数
-        """
-        arguments, starting = [], False
-        for i, label in enumerate(pred_tag):
-            if label > 0:
-                if label % 2 == 1:
-                    starting = True
-                    index = self.schema.id2role[(label - 1) // 2].rfind('-')
-                    arguments.append([[i], (self.schema.id2role[(label - 1) // 2][:index],self.schema.id2role[(label - 1) // 2][index+1:])])
-                elif starting:
-                    arguments[-1][0].append(i)
-                else:
-                    starting = False
-            else:
-                starting = False
 
-        return {text[idx[0]:idx[-1]]: l for idx, l in arguments }
 
 
     def _valid_epoch(self, epoch):
@@ -212,19 +195,21 @@ class BertTrainer(BaseTrainer):
         self.crf_model.train()
         self.train_metrics.reset()
         for batch_idx, batch_data in enumerate(self.train_iter):
-            text_ids, seq_lens, masks, texts, arguments, seq_tags = batch_data
+            text_ids, seq_lens, masks,masks_crf, texts, arguments, seq_tags = batch_data
+
             self.optimizer.zero_grad()
             output = self.model(text_ids, seq_lens, masks)
 
             loss = self.criterion(output, seq_tags)
-            loss += -self.crf_model(emissions=output, mask=masks, tags=seq_tags)
+
+            loss += -self.crf_model(emissions=output, mask=masks_crf, tags=seq_tags)
 
             loss.backward()
             self.optimizer.step()
 
             self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
             self.train_metrics.update('loss', loss.item())
-            best_path = self.crf_model.decode(emissions=output, mask=masks)
+            best_path = self.crf_model.decode(emissions=output, mask=masks_crf)
 
             X, Y, Z = self.evaluate(best_path, texts, arguments)
             for met in self.metric_ftns:
@@ -264,15 +249,15 @@ class BertTrainer(BaseTrainer):
         self.valid_metrics.reset()
         with torch.no_grad():
             for batch_idx, batch_data in enumerate(self.valid_iter):
-                text_ids, seq_lens, masks, texts, arguments, seq_tags = batch_data
+                text_ids, seq_lens, masks,masks_crf, texts, arguments, seq_tags = batch_data
 
                 output = self.model(text_ids, seq_lens, masks)
                 loss = self.criterion(output, seq_tags)
-                loss += -self.crf_model(emissions=output, mask=masks, tags=seq_tags)
+                loss += -self.crf_model(emissions=output, mask=masks_crf, tags=seq_tags)
 
                 self.writer.set_step((epoch - 1) * len(self.valid_iter) + batch_idx, 'valid')
                 self.valid_metrics.update('loss', loss.item())
-                best_path = self.crf_model.decode(emissions=output, mask=masks)
+                best_path = self.crf_model.decode(emissions=output, mask=masks_crf)
                 X, Y, Z = self.evaluate(best_path, texts, arguments)
                 for met in self.metric_ftns:
                     self.valid_metrics.update(met.__name__, met(X, Y, Z))
@@ -316,21 +301,3 @@ class BertTrainer(BaseTrainer):
         # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
         return X,Y,Z
 
-    def extract_arguments(self,text,pred_tag):
-        """arguments抽取函数
-        """
-        arguments, starting = [], False
-        for i, label in enumerate(pred_tag):
-            if label > 0:
-                if label % 2 == 1:
-                    starting = True
-                    index = self.schema.id2role[(label - 1) // 2].rfind('-')
-                    arguments.append([[i], (self.schema.id2role[(label - 1) // 2][:index],self.schema.id2role[(label - 1) // 2][index+1:])])
-                elif starting:
-                    arguments[-1][0].append(i)
-                else:
-                    starting = False
-            else:
-                starting = False
-
-        return {text[idx[0]:idx[-1]]: l for idx, l in arguments }

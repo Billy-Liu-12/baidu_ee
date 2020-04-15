@@ -279,7 +279,7 @@ def extract_arguments(text, pred_tag,schema):
     """arguments抽取函数
     """
     arguments, starting = [], False
-    for i, label in enumerate(pred_tag):
+    for i, label in enumerate(pred_tag[:-1]):
         if label > 0:
             if label % 2 == 1:
                 starting = True
@@ -293,4 +293,4 @@ def extract_arguments(text, pred_tag,schema):
         else:
             starting = False
 
-    return {text[idx[0]:idx[-1]+1]: l for idx, l in arguments}
+    return {''.join(text[idx[0]:idx[-1]+1]).replace('#','').replace('[UNK]','').strip(): l for idx, l in arguments}

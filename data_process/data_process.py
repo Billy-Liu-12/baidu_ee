@@ -108,10 +108,8 @@ class EEBertDataset(Dataset):
             for l in f:
                 l = json.loads(l)
                 input_example = InputExample(l['id'], l['text'])
-                input_example.text_token = self.tokenizer(l['text'])
-                input_example.text_token_id = [
-                    self.word_embedding.stoi[token] if token in self.word_embedding.stoi else self.word_embedding.stoi[
-                        'UNK'] for token in self.tokenizer(l['text'])]
+                input_example.text_token = self.tokenizer.tokenize(l['text'])
+                input_example.text_token_id = self.tokenizer.encode(l['text'],add_special_tokens=True)
 
                 examples.append(input_example)
         return examples
@@ -141,13 +139,11 @@ class EEBertDataset(Dataset):
 
                     input_example.text_token_id = self.tokenizer.encode(l['text'], add_special_tokens=True)
 
-
                     for e in l['event_list']:
 
                         event = Event(e['trigger'], e['class'], self.schema.class2id[e['class']], e['event_type'],
                                       self.schema.event2id[e['event_type']], e['trigger_start_index'])
                         text_seq_tag_id = [0] * len(input_example.text_token_id)
-
                         for a in e['arguments']:
 
                             argument = Argument(a['argument'], e['event_type'] + '-' + a['role'],
@@ -252,6 +248,10 @@ class EEBertDataset(Dataset):
     def seq_tag_collate_fn(self, datas):
         """
         train phrase: 序列标注：对文本中的论元进行序列标注
+        datas[0]: token_ids
+        data[1]: seq_tags
+        data[2];text
+        data[3]:arugment
         """
         seq_lens = []  # 记录每个句子的长度
         text_ids = []  # 训练数据text_token_id
@@ -265,18 +265,18 @@ class EEBertDataset(Dataset):
             seq_lens.append(seq_len)
             mask = [1] * seq_len
 
-            texts.append(data[2])
+            texts.append(self.tokenizer.tokenize(data[2]))
             arguments.append(data[3])
             text_ids.append(data[0] + [self.tokenizer.pad_token_id] * (max_seq_len - seq_len))  # 文本id
-            seq_tags.append(data[1] + [0] * (max_seq_len - seq_len))
+            seq_tags.append(data[1][1:] + [0] * (max_seq_len - seq_len))
             masks.append(mask + [0] * (max_seq_len - seq_len))
 
         text_ids = torch.LongTensor(np.array(text_ids)).to(self.device)
         seq_tags = torch.LongTensor(np.array(seq_tags)).to(self.device)
         masks = torch.ByteTensor(np.array(masks)).to(self.device)
-
+        masks_crf = masks[:,1:]
         seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
-        return text_ids, seq_lens, masks, texts, arguments, seq_tags
+        return text_ids, seq_lens, masks,masks_crf, texts, arguments, seq_tags
 
     def inference_collate_fn(self, datas):
         """
@@ -295,15 +295,17 @@ class EEBertDataset(Dataset):
             seq_lens.append(seq_len)
             mask = [1] * seq_len
 
-            texts.append(data.text)
-            text_ids.append(data.text_token_id + [self.word_embedding.stoi['PAD']] * (max_seq_len - seq_len))  # 文本id
+            texts.append(self.tokenizer.tokenize(data.text))
+            text_ids.append(data.text_token_id + [self.tokenizer.pad_token_id] * (max_seq_len - seq_len))  # 文本id
             masks.append(mask + [0] * (max_seq_len - seq_len))
 
         text_ids = torch.LongTensor(np.array(text_ids)).to(self.device)
         masks = torch.ByteTensor(np.array(masks)).to(self.device)
+        masks_crf = masks[:,1:]
         seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
-        return ids, text_ids, seq_lens, masks, texts
+        return ids, text_ids, seq_lens, masks,masks_crf, texts
 
+# -------------------------------------------------------------
 
 class EEDataset(Dataset):
     def __init__(self, data_dir, file_name, schema_name, word_embedding, device, use_tag=False, tokenizer=None):
@@ -509,7 +511,6 @@ class EEDataset(Dataset):
         text_ids = torch.LongTensor(np.array(text_ids)).to(self.device)
         seq_tags = torch.LongTensor(np.array(seq_tags)).to(self.device)
         masks = torch.ByteTensor(np.array(masks)).to(self.device)
-
         seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
         return text_ids, seq_lens, masks, texts, arguments, seq_tags
 
@@ -540,18 +541,3 @@ class EEDataset(Dataset):
         return ids, text_ids, seq_lens, masks, texts
 
 
-if __name__ == '__main__':
-    data_dir = '../data/raw_data/'
-    train_file = 'train.json'
-    valid_file = 'dev.json'
-    test_file = 'test1.json'
-    schema_filename = 'event_schema.json'
-    pretrained_word_embedding_path = '../data/word_embedding/sgns.sogou.char'
-    word_embedding = load_word_embedding(pretrained_word_embedding_path, embedding_name='new', data_dir=data_dir,
-                                         train_file_name=train_file, valid_file_name=valid_file,
-                                         test_file_name=test_file)
-    train_dataset = EEDataset(data_dir, train_file, schema_filename, word_embedding,
-                              device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
-    data_loader = DataLoader(train_dataset, shuffle=False, batch_size=32, collate_fn=train_dataset.seq_tag_collate_fn)
-    for batch_data in data_loader:
-        continue
