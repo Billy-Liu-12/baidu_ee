@@ -48,8 +48,10 @@ class CRF(nn.Module):
         self.start_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
         self.end_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
         self.transitions = nn.Parameter(torch.empty(num_tags, num_tags)).cuda()
-
         self.reset_parameters()
+
+
+
 
     def reset_parameters(self) -> None:
         """Initialize the transition parameters.
