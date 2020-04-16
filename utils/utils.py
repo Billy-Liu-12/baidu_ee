@@ -275,17 +275,17 @@ def load_word_embedding(word_embedding_path, embedding_name, data_dir=None, trai
         return new_word_embedding
 
 
-def extract_arguments(text, pred_tag,schema):
+def bert_extract_arguments(text, pred_tag, schema):
     """arguments抽取函数
     """
     arguments, starting = [], False
-    for i, label in enumerate(pred_tag[:-1]):
+    for i, label in enumerate(pred_tag):
         if label > 0:
             if label % 2 == 1:
                 starting = True
                 index = schema.id2role[(label - 1) // 2].rfind('-')
                 arguments.append([[i], (
-                schema.id2role[(label - 1) // 2][:index], schema.id2role[(label - 1) // 2][index + 1:])])
+                    schema.id2role[(label - 1) // 2][:index], schema.id2role[(label - 1) // 2][index + 1:])])
             elif starting:
                 arguments[-1][0].append(i)
             else:
@@ -293,4 +293,25 @@ def extract_arguments(text, pred_tag,schema):
         else:
             starting = False
 
-    return {''.join(text[idx[0]:idx[-1]+1]).replace('#','').replace('[UNK]','').strip(): l for idx, l in arguments}
+    return {''.join(text[idx[0]:idx[-1] + 1]).replace('#', '').replace('[UNK]', '').strip(): l for idx, l in
+            arguments}
+
+
+def extract_arguments(text, pred_tag, schema):
+    """arguments抽取函数
+    """
+    arguments, starting = [], False
+    for i, label in enumerate(pred_tag):
+        if label > 0:
+            if label % 2 == 1:
+                starting = True
+                index = schema.id2role[(label - 1) // 2].rfind('-')
+                arguments.append([[i], (
+                    schema.id2role[(label - 1) // 2][:index], schema.id2role[(label - 1) // 2][index + 1:])])
+            elif starting:
+                arguments[-1][0].append(i)
+            else:
+                starting = False
+        else:
+            starting = False
+    return {text[idx[0]:idx[-1] + 1]: l for idx, l in arguments}

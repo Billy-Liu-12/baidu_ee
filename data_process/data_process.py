@@ -62,7 +62,7 @@ class EEBertDataset(Dataset):
         self.bert_path = bert_path
         self.data_dir = data_dir
         self.file_name = file_name
-        self.tokenizer = BertTokenizer.from_pretrained(self.bert_path)
+        self.tokenizer = BertTokenizer.from_pretrained(self.bert_path,do_lower_case=False)
         self.schema = self._load_schema(os.path.join(data_dir, schema_name))
         self.num_tag_labels = len(self.schema.role2id) * 2 + 1  # B I O
         if 'test' not in file_name:
@@ -90,12 +90,13 @@ class EEBertDataset(Dataset):
         examples = []
         for data in self.data:
             text = data.text
+            tokenized_text = data.text_token
             for e in data.events:
                 arguments = {}
                 for a in e.arguments:
                     index = a.role.rfind('-')
                     arguments[a.argument] = (a.role[:index], a.role[index + 1:])
-                examples.append((data.text_token_id, e.text_seq_tags_id, text, arguments))
+                examples.append((data.text_token_id, e.text_seq_tags_id, text, arguments, tokenized_text))
         return examples
 
     def _load_testset(self):
@@ -109,7 +110,7 @@ class EEBertDataset(Dataset):
                 l = json.loads(l)
                 input_example = InputExample(l['id'], l['text'])
                 input_example.text_token = self.tokenizer.tokenize(l['text'])
-                input_example.text_token_id = self.tokenizer.encode(l['text'],add_special_tokens=True)
+                input_example.text_token_id = [self.tokenizer.cls_token_id]+ self.tokenizer.encode(l['text'])
 
                 examples.append(input_example)
         return examples
@@ -130,14 +131,14 @@ class EEBertDataset(Dataset):
         :return:
         """
         examples = []
-        if not os.path.exists(os.path.join(self.data_dir, self.file_name.split('.')[0]+'.pkl')):
+        if not os.path.exists(os.path.join(self.data_dir, self.file_name.split('.')[0] + '.pkl')):
             with open(os.path.join(self.data_dir, self.file_name)) as f:
                 for l in tqdm(f):
                     l = json.loads(l)
                     input_example = InputExample(l['id'], l['text'])
+                    # 对文本分词 以及 编码
                     input_example.text_token = self.tokenizer.tokenize(l['text'])
-
-                    input_example.text_token_id = self.tokenizer.encode(l['text'], add_special_tokens=True)
+                    input_example.text_token_id = [self.tokenizer.cls_token_id] + self.tokenizer.encode(l['text'])
 
                     for e in l['event_list']:
 
@@ -150,7 +151,6 @@ class EEBertDataset(Dataset):
                                                 self.schema.role2id[e['event_type'] + '-' + a['role']],
                                                 a['argument_start_index'])
 
-
                             a_token_id = self.tokenizer.encode(a['argument'])
                             start_index = self.search(a_token_id, input_example.text_token_id)
                             if start_index != -1:
@@ -161,14 +161,14 @@ class EEBertDataset(Dataset):
                                                                            e['event_type'] + '-' + a['role']] * 2 + 2
 
                             event.arguments.append(argument)
-                        event.text_seq_tags_id = text_seq_tag_id
+                        event.text_seq_tags_id = text_seq_tag_id[1:]
                         input_example.events.append(event)
                     examples.append(input_example)
 
-            with open(os.path.join(self.data_dir,self.file_name.split('.')[0]+'.pkl'),'wb') as f:
-                pickle.dump(examples,f)
+            with open(os.path.join(self.data_dir, self.file_name.split('.')[0] + '.pkl'), 'wb') as f:
+                pickle.dump(examples, f)
         else:
-            with open(os.path.join(self.data_dir,self.file_name.split('.')[0]+'.pkl'),'rb') as f:
+            with open(os.path.join(self.data_dir, self.file_name.split('.')[0] + '.pkl'), 'rb') as f:
                 examples = pickle.load(f)
 
         return examples
@@ -251,32 +251,37 @@ class EEBertDataset(Dataset):
         datas[0]: token_ids
         data[1]: seq_tags
         data[2];text
-        data[3]:arugment
+        data[3]:arugments
+        data[4]:tokenized_text
         """
         seq_lens = []  # 记录每个句子的长度
         text_ids = []  # 训练数据text_token_id
         seq_tags = []  # 记录该batch下文本所对应的论元的序列标注
         texts = []
         arguments = []
-        masks = []
+        masks_bert = []
+        masks_crf = []
         max_seq_len = len(max(datas, key=lambda x: len(x[0]))[0])  # 该batch中句子的最大长度
         for data in datas:
             seq_len = len(data[0])
             seq_lens.append(seq_len)
-            mask = [1] * seq_len
+            mask_bert = [1] * seq_len
+            mask_crf = [1] * (seq_len - 1)
 
-            texts.append(self.tokenizer.tokenize(data[2]))
+            texts.append(data[4])
             arguments.append(data[3])
             text_ids.append(data[0] + [self.tokenizer.pad_token_id] * (max_seq_len - seq_len))  # 文本id
-            seq_tags.append(data[1][1:] + [0] * (max_seq_len - seq_len))
-            masks.append(mask + [0] * (max_seq_len - seq_len))
+            masks_bert.append(mask_bert + [0] * (max_seq_len - seq_len))
+
+            seq_tags.append(data[1] + [0] * (max_seq_len - seq_len))
+            masks_crf.append(mask_crf + [0] * (max_seq_len - seq_len))
 
         text_ids = torch.LongTensor(np.array(text_ids)).to(self.device)
         seq_tags = torch.LongTensor(np.array(seq_tags)).to(self.device)
-        masks = torch.ByteTensor(np.array(masks)).to(self.device)
-        masks_crf = masks[:,1:]
+        masks_bert = torch.ByteTensor(np.array(masks_bert)).to(self.device)
+        masks_crf = torch.ByteTensor(np.array(masks_crf)).to(self.device)
         seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
-        return text_ids, seq_lens, masks,masks_crf, texts, arguments, seq_tags
+        return text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, seq_tags
 
     def inference_collate_fn(self, datas):
         """
@@ -286,24 +291,28 @@ class EEBertDataset(Dataset):
         seq_lens = []  # 记录每个句子的长度
         text_ids = []  # 训练数据text_token_id
         texts = []  # 原文本
-        masks = []  # 统一长度，文本内容为1，非文本内容为0
+        masks_bert = []  # 统一长度，文本内容为1，非文本内容为0
+        masks_crf = []
         max_seq_len = len(max(datas, key=lambda x: len(x.text_token_id)).text_token_id)  # 该batch中句子的最大长度
 
         for data in datas:
             ids.append(data.id)
             seq_len = len(data.text_token_id)  # 句子长度
             seq_lens.append(seq_len)
-            mask = [1] * seq_len
+            mask_bert = [1] * seq_len
+            mask_crf = [1] * (seq_len - 1)
 
-            texts.append(self.tokenizer.tokenize(data.text))
+            texts.append(data.text_token)
             text_ids.append(data.text_token_id + [self.tokenizer.pad_token_id] * (max_seq_len - seq_len))  # 文本id
-            masks.append(mask + [0] * (max_seq_len - seq_len))
+            masks_bert.append(mask_bert + [0] * (max_seq_len - seq_len))
+            masks_crf.append(mask_crf + [0] * (max_seq_len - seq_len))
 
         text_ids = torch.LongTensor(np.array(text_ids)).to(self.device)
-        masks = torch.ByteTensor(np.array(masks)).to(self.device)
-        masks_crf = masks[:,1:]
+        masks_bert = torch.ByteTensor(np.array(masks_bert)).to(self.device)
+        masks_crf = torch.ByteTensor(np.array(masks_crf)).to(self.device)
         seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
-        return ids, text_ids, seq_lens, masks,masks_crf, texts
+        return ids, text_ids, seq_lens, masks_bert, masks_crf, texts
+
 
 # -------------------------------------------------------------
 
@@ -539,5 +548,3 @@ class EEDataset(Dataset):
         masks = torch.ByteTensor(np.array(masks)).to(self.device)
         seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
         return ids, text_ids, seq_lens, masks, texts
-
-

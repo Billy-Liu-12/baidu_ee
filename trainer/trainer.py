@@ -9,7 +9,6 @@ from base.base_trainer import BaseTrainer
 from utils.utils import inf_loop, MetricTracker
 from time import time
 import pylcs
-from utils.utils import extract_arguments
 
 class Trainer(BaseTrainer):
     """
@@ -97,7 +96,7 @@ class Trainer(BaseTrainer):
         for pred_tag,text, arguments in zip(batch_pred_tag,batch_text,batch_arguments):
 
             inv_arguments = {v: k for k, v in arguments.items()}
-            pred_arguments = extract_arguments(text,pred_tag,self.schema)
+            pred_arguments = self.extract_arguments(text,pred_tag,self.schema)
             pred_inv_arguments = {v: k for k, v in pred_arguments.items()}
             Y += len(pred_inv_arguments)
             Z += len(inv_arguments)
@@ -153,6 +152,25 @@ class Trainer(BaseTrainer):
             total = self.len_epoch
         return base.format(current, total, 100.0 * current / total)
 
+    def extract_arguments(self,text, pred_tag, schema):
+        """arguments抽取函数
+        """
+        arguments, starting = [], False
+        for i, label in enumerate(pred_tag):
+            if label > 0:
+                if label % 2 == 1:
+                    starting = True
+                    index = schema.id2role[(label - 1) // 2].rfind('-')
+                    arguments.append([[i], (
+                        schema.id2role[(label - 1) // 2][:index], schema.id2role[(label - 1) // 2][index + 1:])])
+                elif starting:
+                    arguments[-1][0].append(i)
+                else:
+                    starting = False
+            else:
+                starting = False
+        return {text[idx[0]:idx[-1] + 1]: l for idx, l in arguments}
+
 
 
 
@@ -195,10 +213,10 @@ class BertTrainer(BaseTrainer):
         self.crf_model.train()
         self.train_metrics.reset()
         for batch_idx, batch_data in enumerate(self.train_iter):
-            text_ids, seq_lens, masks,masks_crf, texts, arguments, seq_tags = batch_data
+            text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, seq_tags = batch_data
 
             self.optimizer.zero_grad()
-            output = self.model(text_ids, seq_lens, masks)
+            output = self.model(text_ids, seq_lens, masks_bert)
 
             loss = self.criterion(output, seq_tags)
 
@@ -249,9 +267,9 @@ class BertTrainer(BaseTrainer):
         self.valid_metrics.reset()
         with torch.no_grad():
             for batch_idx, batch_data in enumerate(self.valid_iter):
-                text_ids, seq_lens, masks,masks_crf, texts, arguments, seq_tags = batch_data
+                text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, seq_tags = batch_data
 
-                output = self.model(text_ids, seq_lens, masks)
+                output = self.model(text_ids, seq_lens, masks_bert)
                 loss = self.criterion(output, seq_tags)
                 loss += -self.crf_model(emissions=output, mask=masks_crf, tags=seq_tags)
 
@@ -288,16 +306,37 @@ class BertTrainer(BaseTrainer):
 
         for pred_tag,text, arguments in zip(batch_pred_tag,batch_text,batch_arguments):
 
-            inv_arguments = {v: k for k, v in arguments.items()}
-            pred_arguments = extract_arguments(text,pred_tag,self.schema)
+            inv_arguments_label = {v: k for k, v in arguments.items()}
+            pred_arguments = self.extract_arguments(text,pred_tag,self.schema)
             pred_inv_arguments = {v: k for k, v in pred_arguments.items()}
             Y += len(pred_inv_arguments)
-            Z += len(inv_arguments)
+            Z += len(inv_arguments_label)
             for k, v in pred_inv_arguments.items():
-                if k in inv_arguments:
+                if k in inv_arguments_label:
                     # 用最长公共子串作为匹配程度度量
-                    l = pylcs.lcs(v, inv_arguments[k])
-                    X += 2. * l / (len(v) + len(inv_arguments[k]))
+                    l = pylcs.lcs(v, inv_arguments_label[k])
+                    X += 2. * l / (len(v) + len(inv_arguments_label[k]))
         # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
         return X,Y,Z
+
+    def extract_arguments(self,text, pred_tag, schema):
+        """arguments抽取函数
+        """
+        arguments, starting = [], False
+        for i, label in enumerate(pred_tag):
+            if label > 0:
+                if label % 2 == 1:
+                    starting = True
+                    index = schema.id2role[(label - 1) // 2].rfind('-')
+                    arguments.append([[i], (
+                        schema.id2role[(label - 1) // 2][:index], schema.id2role[(label - 1) // 2][index + 1:])])
+                elif starting:
+                    arguments[-1][0].append(i)
+                else:
+                    starting = False
+            else:
+                starting = False
+
+        return {''.join(text[idx[0]:idx[-1] + 1]).replace('#', '').replace('[UNK]', '').strip(): l for idx, l in
+                arguments}
 

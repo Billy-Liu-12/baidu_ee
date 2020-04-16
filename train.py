@@ -74,7 +74,7 @@ def bert_train(config):
     # setup data_loader instances
     train_dataloader = config.init_obj('data_loader', data_loader, train_set, collate_fn=train_set.seq_tag_collate_fn)
     valid_dataloader = config.init_obj('data_loader', data_loader, valid_set, collate_fn=valid_set.seq_tag_collate_fn)
-    train_dataloader = valid_dataloader
+    # train_dataloader = valid_dataloader
 
     # build model architecture, then print to console
     model = config.init_obj('model_arch', module_arch, num_classes=train_set.num_tag_labels)
@@ -110,7 +110,7 @@ def run_main(config_file):
                       help='config file path (default: None)')
     args.add_argument('-r', '--resume', default=None, type=str,
                       help='path to latest checkpoint (default: None)')
-    args.add_argument('-d', '--device', default='1', type=str,
+    args.add_argument('-d', '--device', default='2', type=str,
                       help='indices of GPUs to enable (default: all)')
 
     # custom cli options to modify configuration from default values given in json file.
@@ -129,7 +129,7 @@ def run_main(config_file):
 
 
 def pipeline():
-    run_main('configs/bert_crf.json')
+    run_main('configs/bert_rnn_crf.json')
 
 
 if __name__ == '__main__':

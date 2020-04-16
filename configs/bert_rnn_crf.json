@@ -54,7 +54,7 @@
     "type": "DataLoader",
     "args": {
       "shuffle": true,
-      "batch_size": 16
+      "batch_size": 4
     }
   },
   "word_embedding": {
@@ -96,7 +96,7 @@
     "save_period": 1,
     "verbosity": 2,
     "monitor": "max val_f1",
-    "early_stop": 5,
+    "early_stop": 20,
     "tensorboard": true
   }
 }

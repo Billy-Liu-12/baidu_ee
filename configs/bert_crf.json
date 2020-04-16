@@ -5,7 +5,7 @@
     "type": "Bert",
     "args": {
       "bert_path": "data/pretrained_model/Bert_max-len-512",
-      "bert_train": false
+      "bert_train": true
     }
   },
   "model_arch_crf": {
@@ -48,7 +48,7 @@
     "type": "DataLoader",
     "args": {
       "shuffle": true,
-      "batch_size": 16
+      "batch_size": 4
     }
   },
   "optimizer": {
@@ -78,7 +78,7 @@
     "save_period": 1,
     "verbosity": 2,
     "monitor": "max val_f1",
-    "early_stop": 5,
+    "early_stop": 20,
     "tensorboard": true
   }
 }

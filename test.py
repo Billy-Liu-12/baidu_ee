@@ -14,10 +14,11 @@ from parse_config import ConfigParser
 from utils import utils
 from model import torch_crf as module_arch_crf
 from torch.utils import data as data_loader
-from utils.utils import extract_arguments
+from utils.utils import extract_arguments,bert_extract_arguments
 import json
 import numpy as np
 from torch import nn
+import pylcs
 
 def restrain(start, trans):
     start_np = start.cpu().data.numpy()  # tags
@@ -97,12 +98,12 @@ def bert_inference(config):
     schema = test_set.schema
     with torch.no_grad():
         for i, batch_data in enumerate(tqdm(test_dataloader)):
-            ids, text_ids, seq_lens, masks, texts = batch_data
-            output = model(text_ids, seq_lens,masks)
+            ids, text_ids, seq_lens, masks_bert, masks_crf, texts = batch_data
+            output = model(text_ids, seq_lens,masks_bert)
 
-            best_path = crf_model.decode(emissions=output, mask=masks)
+            best_path = crf_model.decode(emissions=output, mask=masks_crf)
             for id, text, path in zip(ids, texts, best_path):
-                arguments = extract_arguments(text, pred_tag=path, schema=schema)
+                arguments = bert_extract_arguments(text, pred_tag=path, schema=schema)
                 event_list = []
                 for k, v in arguments.items():
                     event_list.append({
@@ -217,7 +218,7 @@ def main(config_file):
     args = argparse.ArgumentParser(description='event extraction')
     args.add_argument('-c', '--config', default=config_file, type=str,
                       help='config file path (default: None)')
-    args.add_argument('-r', '--resume', default='saved/models/seq_label/0415_125410/checkpoint-epoch20.pth', type=str,
+    args.add_argument('-r', '--resume', default='saved/models/seq_label/0416_114911/model_best.pth', type=str,
                       help='path to latest checkpoint (default: None)')
     args.add_argument('-d', '--device', default='1', type=str,
                       help='indices of GPUs to enable (default: all)')

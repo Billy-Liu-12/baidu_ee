@@ -105,8 +105,12 @@ class Bert(nn.Module):
         super(Bert, self).__init__()
         self.bert = BertModel.from_pretrained(bert_path)
         # 对bert进行训练
-        for param in self.bert.parameters():
-            param.requires_grad = bert_train
+        for name,param in self.bert.named_parameters():
+            print(name)
+            if 'encoder.layer.11.output.dense' in name:
+                param.requires_grad = bert_train
+            else:
+                param.requires_grad = False
 
         self.fc = nn.Linear(self.bert.config.to_dict()['hidden_size'], num_classes)
 
@@ -138,8 +142,12 @@ class BertRNN(nn.Module):
         self.n_layers = n_layers
         self.batch_first = batch_first
         self.bert = BertModel.from_pretrained(bert_path)
-        for param in self.bert.parameters():
-            param.requires_grad = bert_train
+        # 对bert进行训练
+        for name,param in self.bert.named_parameters():
+            if 'encoder.layer.11' in name:
+                param.requires_grad = bert_train
+            else:
+                param.requires_grad = False
         if rnn_type == 'lstm':
             self.rnn = nn.LSTM(bert_embedding_dim,
                                hidden_size=hidden_dim,
