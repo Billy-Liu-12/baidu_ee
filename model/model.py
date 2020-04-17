@@ -6,7 +6,7 @@
 from torch import nn
 import torch
 from base.base_model import BaseModel
-from pytorch_transformers import BertModel
+from transformers import BertModel
 
 
 class RnnModel(BaseModel):
@@ -106,11 +106,11 @@ class Bert(nn.Module):
         self.bert = BertModel.from_pretrained(bert_path)
         # 对bert进行训练
         for name,param in self.bert.named_parameters():
-            print(name)
-            if 'encoder.layer.11.output.dense' in name:
-                param.requires_grad = bert_train
-            else:
-                param.requires_grad = False
+            # if 'encoder.layer.11' in name:
+            #     param.requires_grad = bert_train
+            # else:
+            #     param.requires_grad = False
+            param.requires_grad = bert_train
 
         self.fc = nn.Linear(self.bert.config.to_dict()['hidden_size'], num_classes)
 
@@ -144,10 +144,11 @@ class BertRNN(nn.Module):
         self.bert = BertModel.from_pretrained(bert_path)
         # 对bert进行训练
         for name,param in self.bert.named_parameters():
-            if 'encoder.layer.11' in name:
-                param.requires_grad = bert_train
-            else:
-                param.requires_grad = False
+            # if 'encoder.layer.11' in name:
+            #     param.requires_grad = bert_train
+            # else:
+            #     param.requires_grad = False
+            param.requires_grad=bert_train
         if rnn_type == 'lstm':
             self.rnn = nn.LSTM(bert_embedding_dim,
                                hidden_size=hidden_dim,

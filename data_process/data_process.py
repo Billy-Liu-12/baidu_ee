@@ -5,7 +5,7 @@
 # @Description:
 import json
 import os
-from pytorch_transformers import BertTokenizer
+from transformers import BertTokenizer
 import random
 import pickle
 from tqdm import tqdm
@@ -62,7 +62,7 @@ class EEBertDataset(Dataset):
         self.bert_path = bert_path
         self.data_dir = data_dir
         self.file_name = file_name
-        self.tokenizer = BertTokenizer.from_pretrained(self.bert_path,do_lower_case=False)
+        self.tokenizer = BertTokenizer.from_pretrained(self.bert_path)
         self.schema = self._load_schema(os.path.join(data_dir, schema_name))
         self.num_tag_labels = len(self.schema.role2id) * 2 + 1  # B I O
         if 'test' not in file_name:
@@ -71,6 +71,7 @@ class EEBertDataset(Dataset):
                 self.data = self.convert_data_tag()
         else:
             self.data = self._load_testset()
+
 
     def __len__(self):
         return len(self.data)

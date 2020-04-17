@@ -6,7 +6,7 @@
 import numpy as np
 import torch
 from base.base_trainer import BaseTrainer
-from utils.utils import inf_loop, MetricTracker
+from utils.utils import inf_loop, MetricTracker,extract_arguments,bert_extract_arguments
 from time import time
 import pylcs
 
@@ -96,7 +96,7 @@ class Trainer(BaseTrainer):
         for pred_tag,text, arguments in zip(batch_pred_tag,batch_text,batch_arguments):
 
             inv_arguments = {v: k for k, v in arguments.items()}
-            pred_arguments = self.extract_arguments(text,pred_tag,self.schema)
+            pred_arguments = extract_arguments(text,pred_tag,self.schema)
             pred_inv_arguments = {v: k for k, v in pred_arguments.items()}
             Y += len(pred_inv_arguments)
             Z += len(inv_arguments)
@@ -152,24 +152,7 @@ class Trainer(BaseTrainer):
             total = self.len_epoch
         return base.format(current, total, 100.0 * current / total)
 
-    def extract_arguments(self,text, pred_tag, schema):
-        """arguments抽取函数
-        """
-        arguments, starting = [], False
-        for i, label in enumerate(pred_tag):
-            if label > 0:
-                if label % 2 == 1:
-                    starting = True
-                    index = schema.id2role[(label - 1) // 2].rfind('-')
-                    arguments.append([[i], (
-                        schema.id2role[(label - 1) // 2][:index], schema.id2role[(label - 1) // 2][index + 1:])])
-                elif starting:
-                    arguments[-1][0].append(i)
-                else:
-                    starting = False
-            else:
-                starting = False
-        return {text[idx[0]:idx[-1] + 1]: l for idx, l in arguments}
+
 
 
 
@@ -307,7 +290,7 @@ class BertTrainer(BaseTrainer):
         for pred_tag,text, arguments in zip(batch_pred_tag,batch_text,batch_arguments):
 
             inv_arguments_label = {v: k for k, v in arguments.items()}
-            pred_arguments = self.extract_arguments(text,pred_tag,self.schema)
+            pred_arguments = bert_extract_arguments(text,pred_tag,self.schema)
             pred_inv_arguments = {v: k for k, v in pred_arguments.items()}
             Y += len(pred_inv_arguments)
             Z += len(inv_arguments_label)
@@ -317,6 +300,7 @@ class BertTrainer(BaseTrainer):
                     l = pylcs.lcs(v, inv_arguments_label[k])
                     X += 2. * l / (len(v) + len(inv_arguments_label[k]))
         # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
+
         return X,Y,Z
 
     def extract_arguments(self,text, pred_tag, schema):

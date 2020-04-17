@@ -8,11 +8,12 @@ import model.metric as module_metric
 import model.model as module_arch
 from parse_config import ConfigParser
 from trainer import Trainer, BertTrainer
-from utils.pytorch_pretrained import optimization
+# from utils.pytorch_pretrained import optimization
+# from torch import optim as optimization
+import transformers
 from model import torch_crf as module_arch_crf
 from torch.utils import data as data_loader
 from utils import utils
-
 # fix random seeds for reproducibility
 SEED = 123
 torch.manual_seed(SEED)
@@ -68,6 +69,8 @@ def main(config):
 def bert_train(config):
     logger = config.get_logger('train')
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    no_decay = ["bias", "LayerNorm.weight"]
+
     # setup data_set, data_loader instances
     train_set = config.init_obj('train_set', module_data, device=device)
     valid_set = config.init_obj('valid_set', module_data, device=device)
@@ -87,12 +90,26 @@ def bert_train(config):
     metrics = [getattr(module_metric, met) for met in config['metrics']]
 
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
-    trainable_params = [*filter(lambda p: p.requires_grad, model.parameters())] + [
-        *filter(lambda p: p.requires_grad, crf_model.parameters())]
+    bert_params = [p for n, p in model.bert.named_parameters() if not any(nd in n for nd in no_decay)]
+    # bert_params = []
+    crf_params = [p for n, p in crf_model.named_parameters() if not any(nd in n for nd in no_decay)]
 
-    optimizer = config.init_obj('optimizer', optimization, trainable_params)
+    if 'rnn' not in config.config['config_file_name']:
+        params = [p for n, p in model.fc.named_parameters() if not any(nd in n for nd in no_decay)]
+    else:
+        params = [p for n, p in model.fc.named_parameters() if not any(nd in n for nd in no_decay)]+[p  for n, p in model.rnn.named_parameters() if not any(nd in n for nd in no_decay)]
 
-    lr_scheduler = config.init_obj('lr_scheduler', torch.optim.lr_scheduler, optimizer)
+
+
+    if bert_params:
+        optimizer = config.init_obj('optimizer', transformers, [{'params':bert_params,'lr':1e-6,"weight_decay": 0.0},
+                                                                {'params':params,'lr':0.001,"weight_decay": 0.0},
+                                                                {'params':crf_params,'lr':0.001,"weight_decay": 0.0}])
+    else:
+        optimizer = config.init_obj('optimizer', transformers, [{'params':params,'lr':0.001,"weight_decay": 0.0},
+                                                                {'params':crf_params,'lr':0.001,"weight_decay": 0.0}])
+
+    lr_scheduler = config.init_obj('lr_scheduler', transformers.optimization, optimizer,num_training_steps=int(len(train_dataloader.dataset)/train_dataloader.batch_size))
 
     trainer = BertTrainer(model, crf_model,criterion, metrics, optimizer,
                           config=config,
@@ -110,7 +127,7 @@ def run_main(config_file):
                       help='config file path (default: None)')
     args.add_argument('-r', '--resume', default=None, type=str,
                       help='path to latest checkpoint (default: None)')
-    args.add_argument('-d', '--device', default='2', type=str,
+    args.add_argument('-d', '--device', default='1', type=str,
                       help='indices of GPUs to enable (default: all)')
 
     # custom cli options to modify configuration from default values given in json file.
@@ -129,7 +146,7 @@ def run_main(config_file):
 
 
 def pipeline():
-    run_main('configs/bert_rnn_crf.json')
+    run_main('configs/bert_crf.json')
 
 
 if __name__ == '__main__':
