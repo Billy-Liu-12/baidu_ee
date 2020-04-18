@@ -72,17 +72,16 @@ def bert_train(config):
     no_decay = ["bias", "LayerNorm.weight"]
 
     # setup data_set, data_loader instances
-    train_set = config.init_obj('train_set', module_data, device=device)
-    valid_set = config.init_obj('valid_set', module_data, device=device)
+    data_set = config.init_obj('data_set', module_data, device=device)
     # setup data_loader instances
-    train_dataloader = config.init_obj('data_loader', data_loader, train_set, collate_fn=train_set.seq_tag_collate_fn)
-    valid_dataloader = config.init_obj('data_loader', data_loader, valid_set, collate_fn=valid_set.seq_tag_collate_fn)
+    train_dataloader = config.init_obj('data_loader', data_loader, data_set.train_set, collate_fn=data_set.seq_tag_collate_fn)
+    valid_dataloader = config.init_obj('data_loader', data_loader, data_set.valid_set, collate_fn=data_set.seq_tag_collate_fn)
     # train_dataloader = valid_dataloader
 
     # build model architecture, then print to console
-    model = config.init_obj('model_arch', module_arch, num_classes=train_set.num_tag_labels)
+    model = config.init_obj('model_arch', module_arch, num_classes=data_set.num_tag_labels)
     # logger.info(model)
-    crf_model = config.init_obj('model_arch_crf', module_arch_crf, train_set.num_tag_labels)
+    crf_model = config.init_obj('model_arch_crf', module_arch_crf, data_set.num_tag_labels)
     logger.info(crf_model)
 
     # get function handles of loss and metrics
@@ -102,12 +101,12 @@ def bert_train(config):
 
 
     if bert_params:
-        optimizer = config.init_obj('optimizer', transformers, [{'params':bert_params,'lr':1e-6,"weight_decay": 0.0},
-                                                                {'params':params,'lr':0.001,"weight_decay": 0.0},
-                                                                {'params':crf_params,'lr':0.001,"weight_decay": 0.0}])
+        optimizer = config.init_obj('optimizer', transformers, [{'params':bert_params,'lr':2e-5,"weight_decay": 0.0},
+                                                                {'params':params,'lr':1e-3,"weight_decay": 0.0},
+                                                                {'params':crf_params,'lr':1e-2,"weight_decay": 0.0}])
     else:
-        optimizer = config.init_obj('optimizer', transformers, [{'params':params,'lr':0.001,"weight_decay": 0.0},
-                                                                {'params':crf_params,'lr':0.001,"weight_decay": 0.0}])
+        optimizer = config.init_obj('optimizer', transformers, [{'params':params,'lr':1e-3,"weight_decay": 0.0},
+                                                                {'params':crf_params,'lr':1e-2,"weight_decay": 0.0}])
 
     lr_scheduler = config.init_obj('lr_scheduler', transformers.optimization, optimizer,num_training_steps=int(len(train_dataloader.dataset)/train_dataloader.batch_size))
 
@@ -115,7 +114,7 @@ def bert_train(config):
                           config=config,
                           train_iter=train_dataloader,
                           valid_iter=valid_dataloader,
-                          schema=train_set.schema,
+                          schema=data_set.schema,
                           lr_scheduler=lr_scheduler)
 
     trainer.train()
@@ -127,7 +126,7 @@ def run_main(config_file):
                       help='config file path (default: None)')
     args.add_argument('-r', '--resume', default=None, type=str,
                       help='path to latest checkpoint (default: None)')
-    args.add_argument('-d', '--device', default='1', type=str,
+    args.add_argument('-d', '--device', default='0', type=str,
                       help='indices of GPUs to enable (default: all)')
 
     # custom cli options to modify configuration from default values given in json file.

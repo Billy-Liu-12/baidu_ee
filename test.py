@@ -220,7 +220,7 @@ def main(config_file):
     args = argparse.ArgumentParser(description='event extraction')
     args.add_argument('-c', '--config', default=config_file, type=str,
                       help='config file path (default: None)')
-    args.add_argument('-r', '--resume', default='saved/models/seq_label/0416_183610/model_best.pth', type=str,
+    args.add_argument('-r', '--resume', default='saved/models/seq_label/0417_235609/model_best.pth', type=str,
                       help='path to latest checkpoint (default: None)')
     args.add_argument('-d', '--device', default='1', type=str,
                       help='indices of GPUs to enable (default: all)')
@@ -233,7 +233,7 @@ def main(config_file):
         inference(config)
 
 def pipeline():
-    main('configs/bert_crf.json')
+    main('configs/bert_rnn_crf.json')
 
 if __name__ == '__main__':
 

@@ -87,12 +87,12 @@
     }
   },
   "trainer": {
-    "epochs": 1000,
+    "epochs": 200,
     "saved": "saved/",
     "save_period": 1,
-    "verbosity": 2,
+    "verbosity": 1,
     "monitor": "max val_f1",
-    "early_stop": 20,
+    "early_stop": 7,
     "tensorboard": true
   }
 }

@@ -13,6 +13,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from utils.utils import load_word_embedding, Wordembedding
 import numpy as np
+from sklearn.model_selection import train_test_split
 
 
 class Argument():
@@ -57,7 +58,7 @@ class InputExample():
 
 
 class EEBertDataset(Dataset):
-    def __init__(self, data_dir, file_name, schema_name, bert_path, device, use_tag=False):
+    def __init__(self, data_dir, file_name, schema_name, bert_path, device, valid_size,use_tag=False):
         self.device = device
         self.bert_path = bert_path
         self.data_dir = data_dir
@@ -69,6 +70,9 @@ class EEBertDataset(Dataset):
             self.data = self._load_dataset()
             if use_tag:
                 self.data = self.convert_data_tag()
+            self.train_set,self.valid_set = train_test_split(self.data,test_size=valid_size,random_state=1024)
+
+
         else:
             self.data = self._load_testset()
 
@@ -111,7 +115,7 @@ class EEBertDataset(Dataset):
                 l = json.loads(l)
                 input_example = InputExample(l['id'], l['text'])
                 input_example.text_token = self.tokenizer.tokenize(l['text'])
-                input_example.text_token_id = [self.tokenizer.cls_token_id]+ self.tokenizer.encode(l['text'])
+                input_example.text_token_id = [self.tokenizer.cls_token_id]+ self.tokenizer.encode(l['text'],add_special_tokens=False)
 
                 examples.append(input_example)
         return examples
@@ -139,7 +143,7 @@ class EEBertDataset(Dataset):
                     input_example = InputExample(l['id'], l['text'])
                     # 对文本分词 以及 编码
                     input_example.text_token = self.tokenizer.tokenize(l['text'])
-                    input_example.text_token_id = [self.tokenizer.cls_token_id] + self.tokenizer.encode(l['text'])
+                    input_example.text_token_id = [self.tokenizer.cls_token_id] + self.tokenizer.encode(l['text'],add_special_tokens=False)
 
                     for e in l['event_list']:
 
@@ -152,7 +156,7 @@ class EEBertDataset(Dataset):
                                                 self.schema.role2id[e['event_type'] + '-' + a['role']],
                                                 a['argument_start_index'])
 
-                            a_token_id = self.tokenizer.encode(a['argument'])
+                            a_token_id = self.tokenizer.encode(a['argument'],add_special_tokens=False)
                             start_index = self.search(a_token_id, input_example.text_token_id)
                             if start_index != -1:
                                 text_seq_tag_id[start_index] = self.schema.role2id[
@@ -168,6 +172,7 @@ class EEBertDataset(Dataset):
 
             with open(os.path.join(self.data_dir, self.file_name.split('.')[0] + '.pkl'), 'wb') as f:
                 pickle.dump(examples, f)
+                print('saved pkl file')
         else:
             with open(os.path.join(self.data_dir, self.file_name.split('.')[0] + '.pkl'), 'rb') as f:
                 examples = pickle.load(f)
