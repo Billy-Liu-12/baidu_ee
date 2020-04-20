@@ -2,15 +2,9 @@
   "name": "seq_label",
   "n_gpu": 1,
   "model_arch": {
-    "type": "BertRNN",
+    "type": "Bert",
     "args": {
-      "rnn_type": "lstm",
       "bert_path": "data/pretrained_model/chinese_wwm_ext_pytorch",
-      "hidden_dim": 256,
-      "n_layers": 1,
-      "bidirectional": true,
-      "batch_first": true,
-      "dropout": 0.5,
       "bert_train": false
     }
   },
@@ -47,17 +41,6 @@
     "args": {
       "shuffle": true,
       "batch_size": 4
-    }
-  },
-  "word_embedding": {
-    "type": "load_word_embedding",
-    "args": {
-      "word_embedding_path": "data/word_embedding/sgns.sogou.char",
-      "embedding_name": "new",
-      "data_dir": "data/raw_data/",
-      "train_file_name": "train.json",
-      "valid_file_name": "valid.json",
-      "test_file_name": "test1.json"
     }
   },
   "optimizer": {

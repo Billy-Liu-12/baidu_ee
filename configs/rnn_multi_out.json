@@ -2,16 +2,14 @@
   "name": "seq_label",
   "n_gpu": 1,
   "model_arch": {
-    "type": "BertRNN",
+    "type": "RNN_MultiOut",
     "args": {
       "rnn_type": "lstm",
-      "bert_path": "data/pretrained_model/chinese_wwm_ext_pytorch",
       "hidden_dim": 256,
-      "n_layers": 1,
+      "n_layers": 2,
       "bidirectional": true,
       "batch_first": true,
-      "dropout": 0.5,
-      "bert_train": false
+      "dropout": 0.5
     }
   },
   "model_arch_crf": {
@@ -45,7 +43,7 @@
   "data_loader": {
     "type": "DataLoader",
     "args": {
-      "shuffle": true,
+      "shuffle": false,
       "batch_size": 4
     }
   },
@@ -60,24 +58,27 @@
       "test_file_name": "test1.json"
     }
   },
-  "optimizer": {
-    "type": "AdamW",
-    "args": {
-
-    }
-  },
+    "optimizer": {
+        "type": "Adam",
+        "args":{
+            "lr": 0.001,
+            "weight_decay": 0,
+            "amsgrad": true
+        }
+    },
   "loss": "crossentropy_loss",
   "metrics": [
     "f1",
     "precision",
     "recall"
   ],
-  "lr_scheduler": {
-    "type": "get_linear_schedule_with_warmup",
-    "args": {
-      "num_warmup_steps": 5
-    }
-  },
+    "lr_scheduler": {
+        "type": "StepLR",
+        "args": {
+            "step_size": 50,
+            "gamma": 0.1
+        }
+    },
   "trainer": {
     "epochs": 200,
     "saved": "saved/",

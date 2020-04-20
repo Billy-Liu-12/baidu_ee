@@ -14,11 +14,12 @@ from parse_config import ConfigParser
 from utils import utils
 from model import torch_crf as module_arch_crf
 from torch.utils import data as data_loader
-from utils.utils import extract_arguments,bert_extract_arguments
+from utils.utils import extract_arguments,bert_extract_arguments,inference_feature_collate_fn
 import json
 import numpy as np
 from torch import nn
 import pylcs
+import pickle
 
 def restrain(start, trans):
     start_np = start.cpu().data.numpy()  # tags
@@ -53,19 +54,18 @@ def inference(config):
 
     word_embedding = config.init_ftn('word_embedding', utils)
     # setup dataset, data_loader instances
-    test_set = config.init_obj('test1_set', module_data, word_embedding=word_embedding, device=device)
-    test_dataloader = config.init_obj('data_loader', data_loader, test_set, collate_fn=test_set.inference_collate_fn)
-    test_set.tokenizer
+    test_set_ = config.init_obj('test1_set', module_data,device=device)
+    with open('data/bert_feature/test_feature.pkl', 'rb') as f:
+        test_set = pickle.load(f)
+    test_dataloader = config.init_obj('data_loader', data_loader, test_set, collate_fn=inference_feature_collate_fn)
+
     # build model architecture
-    model = config.init_obj('model_arch', module_arch, word_embedding=word_embedding,
-                            output_dim=test_set.num_tag_labels)
+    model = config.init_obj('model_arch', module_arch, num_classes=435)
     logger.info(model)
-    crf_model = config.init_obj('model_arch_crf', module_arch_crf, test_set.num_tag_labels)
+    crf_model = config.init_obj('model_arch_crf', module_arch_crf, 435)
     logger.info(crf_model)
 
-    # get function handles of loss and metrics
-    loss_fn = getattr(module_loss, config['loss'])
-    metric_fns = [getattr(module_metric, met) for met in config['metrics']]
+
 
     logger.info('Loading checkpoint: {} ...'.format(config.resume))
     checkpoint = torch.load(config.resume)
@@ -94,21 +94,20 @@ def inference(config):
     model.eval()
     crf_model.eval()
 
-    total_loss = 0.0
-    total_metrics = torch.zeros(len(metric_fns))
-
     # inference
     f_txt = open('result.txt','w',encoding='utf8')
     f_result = open('result.json', 'w', encoding='utf8')
-    schema = test_set.schema
+    schema = test_set_.schema
     with torch.no_grad():
         for i, batch_data in enumerate(tqdm(test_dataloader)):
-            ids, text_ids, seq_lens, masks, texts = batch_data
-            output = model(text_ids, seq_lens)
 
-            best_path = crf_model.decode(emissions=output, mask=masks)
+            ids, sentence_feature,text_ids, seq_lens, masks_bert,masks_crf, texts = batch_data
+
+            out_class,out_event,out_tag = model(sentence_feature, seq_lens)
+
+            best_path = crf_model.decode(emissions=out_tag, mask=masks_crf)
             for id, text, path in zip(ids, texts, best_path):
-                arguments = extract_arguments(text, pred_tag=path, schema=schema)
+                arguments = bert_extract_arguments(text, pred_tag=path, schema=schema)
                 event_list = []
                 for k, v in arguments.items():
                     event_list.append({
@@ -120,7 +119,6 @@ def inference(config):
                     })
                 res = {}
                 res['id'] = id
-
                 res['event_list'] = event_list
                 l = json.dumps(res, ensure_ascii=False)
                 f_result.write(l + '\n')
@@ -128,8 +126,6 @@ def inference(config):
                 res['id'] = id
                 res['text'] = text
                 res['event_list'] = event_list
-                # l = json.dumps(res, ensure_ascii=False)
-                print(res)
                 f_txt.write(str(res)+'\n')
     f_result.close()
     f_txt.close()
@@ -220,7 +216,7 @@ def main(config_file):
     args = argparse.ArgumentParser(description='event extraction')
     args.add_argument('-c', '--config', default=config_file, type=str,
                       help='config file path (default: None)')
-    args.add_argument('-r', '--resume', default='saved/models/seq_label/0417_235609/model_best.pth', type=str,
+    args.add_argument('-r', '--resume', default='saved/models/seq_label/0419_200954/model_best.pth', type=str,
                       help='path to latest checkpoint (default: None)')
     args.add_argument('-d', '--device', default='1', type=str,
                       help='indices of GPUs to enable (default: all)')
@@ -233,8 +229,9 @@ def main(config_file):
         inference(config)
 
 def pipeline():
-    main('configs/bert_rnn_crf.json')
+    main('configs/rnn_multi_out.json')
 
 if __name__ == '__main__':
 
     pipeline()
+    # saved/models/seq_label/0419_160124/checkpoint-epoch1.pth

@@ -61,7 +61,7 @@ class ConfigParser:
             os.environ["CUDA_VISIBLE_DEVICES"] = args.device
         if args.resume is not None:
             resume = Path(args.resume)
-            cfg_fname = resume.parent / args.config.split('/')[-1]
+            cfg_fname = resume.parent / 'config.json'
         else:
             msg_no_cfg = "Configuration file need to be specified. Add '-c rnn_config.json', for example."
             assert args.config is not None, msg_no_cfg
@@ -69,7 +69,7 @@ class ConfigParser:
             cfg_fname = Path(args.config)
 
         config = read_json(cfg_fname)
-        config['config_file_name'] = cfg_fname.name
+        config['config_file_name'] = args.config
         if args.config and resume:
             # update new config for fine-tuning
             config.update(read_json(args.config))

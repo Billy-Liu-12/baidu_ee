@@ -10,6 +10,7 @@ import os
 import numpy as np
 import pickle
 import word2vec
+import torch
 
 
 def shuffle_aligned_list(data):
@@ -315,3 +316,91 @@ def extract_arguments(text, pred_tag, schema):
         else:
             starting = False
     return {text[idx[0]:idx[-1] + 1]: l for idx, l in arguments}
+
+
+class Feature_example():
+    def __init__(self, sentence_feature, text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, class_labels,
+                 event_labels, seq_tags):
+        self.sentence_feature = sentence_feature
+        self.text_ids = text_ids
+        self.seq_lens = seq_lens
+        self.masks_bert = masks_bert
+        self.masks_crf = masks_crf
+        self.texts = texts
+        self.arguments = arguments
+        self.class_labels = class_labels
+        self.event_labels = event_labels
+        self.seq_tags = seq_tags
+
+
+class Test_example():
+    def __init__(self, id, sf, text_id, seq_len, mask_bert, mask_crf, text):
+        self.id = id
+        self.sf = sf
+        self.text_id = text_id
+        self.seq_len = seq_len
+        self.mask_bert = mask_bert
+        self.mask_crf = mask_crf
+        self.text = text
+
+
+def inference_feature_collate_fn(datas):
+    """
+    使用bert抽取特征
+    :param datas:
+    :return:
+    """
+    ids = []
+    sentence_feature = []
+    text_ids = []
+    seq_lens = []
+    masks_bert = []
+    masks_crf = []
+    texts = []
+    for t_example in datas:
+        ids.append(t_example.id)
+        sentence_feature.append(t_example.sf)
+        text_ids.append(t_example.text_id)
+        seq_lens.append(t_example.seq_len)
+        masks_bert.append(t_example.mask_bert)
+        masks_crf.append(t_example.mask_crf)
+        texts.append(t_example.text)
+
+    return ids, torch.from_numpy(np.array(sentence_feature)).cuda(), text_ids, torch.from_numpy(
+        np.array(seq_lens)).cuda(),masks_bert, torch.from_numpy(np.array(masks_crf)).cuda(),texts
+
+
+def feature_collate_fn(datas):
+    """
+    预训练的bert抽取其中特征
+
+    :param datas:
+    :return:
+    """
+    sentence_feature = []
+    text_ids = []
+    seq_lens = []
+    masks_bert = []
+    masks_crf = []
+    texts = []
+    arguments = []
+    class_labels = []
+    event_labels = []
+    seq_tags = []
+
+    for example in datas:
+        sentence_feature.append(example.sentence_feature)
+        text_ids.append(example.text_ids)
+        seq_lens.append(example.seq_lens)
+        masks_bert.append(example.masks_bert)
+        masks_crf.append(example.masks_crf)
+        texts.append(example.texts)
+        arguments.append(example.arguments)
+        class_labels.append(example.class_labels)
+        event_labels.append(example.event_labels)
+        seq_tags.append(example.seq_tags)
+
+    return torch.from_numpy(np.array(sentence_feature)).cuda(), text_ids, torch.from_numpy(
+        np.array(seq_lens)).cuda(), masks_bert, torch.from_numpy(
+        np.array(masks_crf)).cuda(), texts, arguments, class_labels, event_labels, torch.from_numpy(
+        np.array(seq_tags)).cuda()

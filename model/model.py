@@ -128,7 +128,7 @@ class Bert(nn.Module):
         sentence, cls = self.bert(context, attention_mask=mask)
         out = self.fc(sentence)
         out_ = out[:, 1:, :]
-        return out_
+        return out_,sentence
 
 
 class BertRNN(nn.Module):
@@ -172,7 +172,7 @@ class BertRNN(nn.Module):
                               dropout=dropout)
 
         self.dropout = nn.Dropout(dropout)
-        self.fc = nn.Linear(hidden_dim * n_layers, num_classes)
+        self.fc = nn.Linear(hidden_dim * 2, num_classes)
 
     def forward(self, context, seq_len, mask):
         # context    输入的句子
@@ -209,6 +209,166 @@ class BertRNN(nn.Module):
         out = self.fc(self.dropout(output))
 
         return out[:,1:,:]
+
+    def prepare_pack_padded_sequence(self, inputs_words, seq_lengths, descending=True):
+        """
+        :param device:
+        :param inputs_words:
+        :param seq_lengths:
+        :param descending:
+        :return:
+        """
+        sorted_seq_lengths, indices = torch.sort(seq_lengths, descending=descending)
+
+        _, desorted_indices = torch.sort(indices, descending=False)
+        sorted_inputs_words = inputs_words[indices]
+        return sorted_inputs_words, sorted_seq_lengths, desorted_indices
+
+class RNN(nn.Module):
+
+    def __init__(self, rnn_type, hidden_dim, n_layers, bidirectional, batch_first, dropout,
+                 num_classes, bert_embedding_dim=768):
+        super(RNN, self).__init__()
+        self.rnn_type = rnn_type.lower()
+        self.bidirectional = bidirectional
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        self.batch_first = batch_first
+
+        if rnn_type == 'lstm':
+            self.rnn = nn.LSTM(bert_embedding_dim,
+                               hidden_size=hidden_dim,
+                               num_layers=n_layers,
+                               bidirectional=bidirectional,
+                               batch_first=batch_first,
+                               dropout=dropout)
+        elif rnn_type == 'gru':
+            self.rnn = nn.GRU(bert_embedding_dim,
+                              hidden_size=hidden_dim,
+                              num_layers=n_layers,
+                              bidirectional=bidirectional,
+                              batch_first=batch_first,
+                              dropout=dropout)
+        else:
+            self.rnn = nn.RNN(bert_embedding_dim,
+                              hidden_size=hidden_dim,
+                              num_layers=n_layers,
+                              bidirectional=bidirectional,
+                              batch_first=batch_first,
+                              dropout=dropout)
+
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(hidden_dim * 2, num_classes)
+
+    def forward(self, sentence_feature, seq_len):
+        # context    输入的句子
+        # mask  对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
+        batch_size = sentence_feature.shape[0]
+        encoder_out = torch.reshape(sentence_feature, [batch_size, -1, 768])
+
+        encoder_out, sorted_seq_lengths, desorted_indices = self.prepare_pack_padded_sequence(encoder_out, seq_len)
+
+        # pack sequence
+        packed_embedded = nn.utils.rnn.pack_padded_sequence(encoder_out, sorted_seq_lengths,
+                                                            batch_first=self.batch_first)
+        if self.rnn_type in ['rnn', 'gru']:
+            packed_output, hidden = self.rnn(packed_embedded)
+        else:
+            packed_output, (hidden, cell) = self.rnn(packed_embedded)
+        # unpack sequence
+        # output = [ batch size,sent len, hidden_dim * bidirectional]
+        output, output_lengths = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=self.batch_first)
+        output = output[desorted_indices]
+        #
+        # if not self.bidirectional:
+        #     hidden = torch.reshape(hidden,(hidden.shape[1],self.hidden_dim * self.n_layers))
+        # else:
+        #     hidden = torch.reshape(hidden, (-1,hidden.shape[1], self.hidden_dim * self.n_layers))
+        #     hidden = torch.mean(hidden,dim=0)
+        # output = torch.sum(output,dim=1)
+        out = self.fc(self.dropout(output))
+
+        return out[:,1:,:]
+
+    def prepare_pack_padded_sequence(self, inputs_words, seq_lengths, descending=True):
+        """
+        :param device:
+        :param inputs_words:
+        :param seq_lengths:
+        :param descending:
+        :return:
+        """
+        sorted_seq_lengths, indices = torch.sort(seq_lengths, descending=descending)
+
+        _, desorted_indices = torch.sort(indices, descending=False)
+        sorted_inputs_words = inputs_words[indices]
+        return sorted_inputs_words, sorted_seq_lengths, desorted_indices
+
+
+class RNN_MultiOut(nn.Module):
+
+    def __init__(self, rnn_type, hidden_dim, n_layers, bidirectional, batch_first, dropout,
+                 num_classes, bert_embedding_dim=768):
+        super(RNN_MultiOut, self).__init__()
+        self.rnn_type = rnn_type.lower()
+        self.bidirectional = bidirectional
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        self.batch_first = batch_first
+
+        if rnn_type == 'lstm':
+            self.rnn = nn.LSTM(bert_embedding_dim,
+                               hidden_size=hidden_dim,
+                               num_layers=n_layers,
+                               bidirectional=bidirectional,
+                               batch_first=batch_first,
+                               dropout=dropout)
+        elif rnn_type == 'gru':
+            self.rnn = nn.GRU(bert_embedding_dim,
+                              hidden_size=hidden_dim,
+                              num_layers=n_layers,
+                              bidirectional=bidirectional,
+                              batch_first=batch_first,
+                              dropout=dropout)
+        else:
+            self.rnn = nn.RNN(bert_embedding_dim,
+                              hidden_size=hidden_dim,
+                              num_layers=n_layers,
+                              bidirectional=bidirectional,
+                              batch_first=batch_first,
+                              dropout=dropout)
+
+        self.dropout = nn.Dropout(dropout)
+        self.fc_class = nn.Linear(hidden_dim * 2,10)
+        self.fc_event = nn.Linear(hidden_dim * 2,66)
+        self.fc_tag = nn.Linear(hidden_dim * 2, num_classes)
+
+    def forward(self, sentence_feature, seq_len):
+        # context    输入的句子
+        # mask  对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
+        batch_size = sentence_feature.shape[0]
+        encoder_out = torch.reshape(sentence_feature, [batch_size, -1, 768])
+
+        encoder_out, sorted_seq_lengths, desorted_indices = self.prepare_pack_padded_sequence(encoder_out, seq_len)
+
+        # pack sequence
+        packed_embedded = nn.utils.rnn.pack_padded_sequence(encoder_out, sorted_seq_lengths,
+                                                            batch_first=self.batch_first)
+        if self.rnn_type in ['rnn', 'gru']:
+            packed_output, hidden = self.rnn(packed_embedded)
+        else:
+            packed_output, (hidden, cell) = self.rnn(packed_embedded)
+        # unpack sequence
+        # output = [ batch size,sent len, hidden_dim * bidirectional]
+        output, output_lengths = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=self.batch_first)
+        output = output[desorted_indices]
+
+        output_cls = torch.sum(output,dim=1)
+        out_class = self.fc_class(self.dropout(output_cls))
+        out_event = self.fc_event(self.dropout(output_cls))
+        out_tag = self.fc_tag(self.dropout(output))
+
+        return out_class,out_event,out_tag[:,1:,:]
 
     def prepare_pack_padded_sequence(self, inputs_words, seq_lengths, descending=True):
         """

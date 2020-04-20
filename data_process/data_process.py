@@ -58,7 +58,7 @@ class InputExample():
 
 
 class EEBertDataset(Dataset):
-    def __init__(self, data_dir, file_name, schema_name, bert_path, device, valid_size,use_tag=False):
+    def __init__(self, data_dir, file_name, schema_name, bert_path, device, valid_size=0.2,use_tag=False):
         self.device = device
         self.bert_path = bert_path
         self.data_dir = data_dir
@@ -206,28 +206,56 @@ class EEBertDataset(Dataset):
 
         return EESchema(class2id, id2class, event2id, id2event, role2id, id2role)
 
-    def class_collate_fn(self, datas):
+    def collate_fn(self, datas):
         """
         文本分类数据预处理--分九大类
-
+        """
+        """
+        train phrase: 序列标注：对文本中的论元进行序列标注
+        datas[0]: token_ids
+        data[1]: seq_tags
+        data[2];text
+        data[3]:arugments
+        data[4]:tokenized_text
         """
         seq_lens = []  # 记录每个句子的长度
-        texts = []  # 训练数据text
-        class_label = []  # 记录该batch下文本所对应的类别向量
-        max_seq_len = len(max(datas, key=lambda x: len(x.text_token_id)).text_token_id)  # 该batch中句子的最大长度
+        text_ids = []  # 训练数据text_token_id
+        seq_tags = []  # 记录该batch下文本所对应的论元的序列标注
+        texts = []
+        arguments = []
+        masks_bert = []
+        masks_crf = []
+        class_labels = []
+        event_labels = []
+        max_seq_len = len(max(datas, key=lambda x: len(x[0]))[0])  # 该batch中句子的最大长度
         for data in datas:
-            sentence_len = len(data.text_token_id)
-            seq_lens.append(sentence_len)
-            if sentence_len < max_seq_len:
-                texts.append(data.text_token_id + [self.word_embedding.stoi['PAD']] * (max_seq_len - sentence_len))
-            class_ids = [0] * 9  # 九大事件类型
-            for idx, e in enumerate(data.events):
-                class_ids[e.event_class_id] = 1
-            class_label.append(class_ids)
-        texts = torch.LongTensor(np.array(texts)).to(self.device)
-        class_label = torch.LongTensor(np.array(class_label)).to(self.device)
+            seq_len = len(data[0])
+            seq_lens.append(seq_len)
+            mask_bert = [1] * seq_len
+            mask_crf = [1] * (seq_len - 1)
+
+            texts.append(data[4])
+            arguments.append(data[3])
+            if len(data[3]) == 0:
+                class_labels.append(len(self.schema.class2id))
+                event_labels.append(len(self.schema.event2id))
+            else:
+                class_labels.append(self.schema.class2id[list(data[3].values())[0][0].split('-')[0]])
+                event_labels.append(self.schema.event2id[list(data[3].values())[0][0]])
+            text_ids.append(data[0] + [self.tokenizer.pad_token_id] * (max_seq_len - seq_len))  # 文本id
+            masks_bert.append(mask_bert + [0] * (max_seq_len - seq_len))
+
+            seq_tags.append(data[1] + [0] * (max_seq_len - seq_len))
+            masks_crf.append(mask_crf + [0] * (max_seq_len - seq_len))
+
+        text_ids = torch.LongTensor(np.array(text_ids)).to(self.device)
+        seq_tags = torch.LongTensor(np.array(seq_tags)).to(self.device)
+        masks_bert = torch.ByteTensor(np.array(masks_bert)).to(self.device)
+        masks_crf = torch.ByteTensor(np.array(masks_crf)).to(self.device)
         seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
-        return texts, seq_lens, class_label
+        return text_ids, seq_lens, masks_bert, masks_crf, texts, arguments,class_labels,event_labels, seq_tags
+
+
 
     def event_collate_fn(self, datas):
         """
