@@ -7,6 +7,8 @@ from torch import nn
 import torch
 from base.base_model import BaseModel
 from transformers import BertModel
+from .torch_crf import CRF
+import numpy as np
 
 
 class RnnModel(BaseModel):
@@ -129,6 +131,51 @@ class Bert(nn.Module):
         out = self.fc(sentence)
         out_ = out[:, 1:, :]
         return out_,sentence
+
+
+class Bert_CRF(BaseModel):
+
+    def __init__(self, bert_path, bert_train, num_class,num_event,num_tags,use_class_label,use_event_label,dropout):
+        super(Bert_CRF, self).__init__()
+        self.use_class_label = use_class_label
+        self.use_event_label = use_event_label
+        self.bert = BertModel.from_pretrained(bert_path)
+        self.crf = CRF(num_tags,batch_first=True)
+        # if torch.cuda.device_count() >2:
+        #     torch.nn.DataParallel(self.crf)
+        # 对bert进行训练
+        for name,param in self.bert.named_parameters():
+            # if '21' in name or '20' in name or '19' in name or '18' in name :
+            #     param.requires_grad = bert_train
+            # else:
+            #     param.requires_grad = False
+            param.requires_grad = bert_train
+        self.fc_class = nn.Linear(self.bert.config.to_dict()['hidden_size'],num_class)
+        self.fc_event = nn.Linear(self.bert.config.to_dict()['hidden_size'],num_event)
+        self.fc_tags = nn.Linear(self.bert.config.to_dict()['hidden_size'], num_tags)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, context, seq_len, mask_bert):
+        # context  输入的句子序列
+        # seq_len  句子长度
+        # mask     对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
+
+        # cls [batch_size, 768]
+        # sentence [batch size,sen len,  768]
+        context = torch.reshape(context, [-1, context.shape[-1]])
+        mask_bert = torch.reshape(mask_bert, [-1, mask_bert.shape[-1]])
+
+        bert_sentence, bert_cls = self.bert(context, attention_mask=mask_bert)
+        pred_tags = self.fc_tags(self.dropout(bert_sentence))[:, 1:, :]
+
+        if self.use_class_label:
+            pred_class = self.fc_class(self.dropout(bert_cls))
+
+        if self.use_event_label:
+            pred_event = self.fc_event(self.dropout(bert_cls))
+
+        return pred_tags
 
 
 class BertRNN(nn.Module):

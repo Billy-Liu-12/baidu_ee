@@ -172,9 +172,9 @@ def bert_train(config):
         optimizer = config.init_obj('optimizer', optimization, [{'params':params},
                                                                 {'params':crf_params,'lr':1e-2,"weight_decay": 0.0}])
 
-    # lr_scheduler = config.init_obj('lr_scheduler', optimization.optimization, optimizer,num_training_steps=int(len(train_dataloader.dataset)/train_dataloader.batch_size))
+    lr_scheduler = config.init_obj('lr_scheduler', optimization.optimization, optimizer,num_training_steps=int(len(train_dataloader.dataset)/train_dataloader.batch_size))
 
-    lr_scheduler = config.init_obj('lr_scheduler', optimization.lr_scheduler, optimizer)
+    # lr_scheduler = config.init_obj('lr_scheduler', optimization.lr_scheduler, optimizer)
 
     trainer = BertTrainer(model, crf_model,criterion, metrics, optimizer,
                           config=config,
@@ -212,7 +212,7 @@ def run_main(config_file):
 
 
 def pipeline():
-    run_main('configs/rnn.json')
+    run_main('configs/roberta_crf.json')
 
 
 if __name__ == '__main__':

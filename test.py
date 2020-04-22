@@ -41,8 +41,8 @@ def restrain(start, trans):
                if j > 0 and j % 2 == 0 and not j == (i + 1):
                     trans_np[i][j] = -10000.0
 
-    start = nn.Parameter(torch.from_numpy(start_np)).cuda()
-    trans = nn.Parameter(torch.from_numpy(trans_np)).cuda()
+    start = nn.Parameter(torch.FloatTensor(start_np)).cuda()
+    trans = nn.Parameter(torch.FloatTensor(trans_np)).cuda()
     return start, trans
 
 
@@ -139,10 +139,8 @@ def bert_inference(config):
     test_dataloader = config.init_obj('data_loader', data_loader, test_set, collate_fn=test_set.inference_collate_fn)
 
     # build model architecture
-    model = config.init_obj('model_arch', module_arch,num_classes=test_set.num_tag_labels)
+    model = config.init_obj('model_arch', module_arch,device=device)
     logger.info(model)
-    crf_model = config.init_obj('model_arch_crf', module_arch_crf, test_set.num_tag_labels)
-    logger.info(crf_model)
 
     # get function handles of loss and metrics
     loss_fn = getattr(module_loss, config['loss'])
@@ -151,19 +149,18 @@ def bert_inference(config):
     logger.info('Loading checkpoint: {} ...'.format(config.resume))
     checkpoint = torch.load(config.resume)
     state_dict = checkpoint['state_dict']
-    crf_state_dict = checkpoint['crf_state_dict']
-    if config['n_gpu'] > 1:
-        model = torch.nn.DataParallel(model)
-        crf_model = torch.nn.DataParallel(crf_model)
-    model.load_state_dict(state_dict)
-    crf_model.load_state_dict(crf_state_dict)
+    # crf_state_dict = checkpoint['crf_state_dict']
+    # if config['n_gpu'] > 1:
+    #     model = torch.nn.DataParallel(model)
 
-    crf_model.start_transitions, crf_model.transitions = \
-        restrain(crf_model.start_transitions, crf_model.transitions)
+    model.load_state_dict({k.replace('module.',''):v for k,v in state_dict.items()})
+
+    model.crf.start_transitions, model.crf.transitions = \
+        restrain(model.crf.start_transitions, model.crf.transitions)
 
     # prepare model for testing
     model = model.to(device)
-    crf_model = crf_model.to(device)
+    model.crf.to(device)
 
     # O:0 B：2id+1 I：2id+2
     '''
@@ -173,7 +170,7 @@ def bert_inference(config):
     '''
 
     model.eval()
-    crf_model.eval()
+    model.crf.eval()
 
     total_loss = 0.0
     total_metrics = torch.zeros(len(metric_fns))
@@ -185,9 +182,8 @@ def bert_inference(config):
     with torch.no_grad():
         for i, batch_data in enumerate(tqdm(test_dataloader)):
             ids, text_ids, seq_lens, masks_bert, masks_crf, texts = batch_data
-            output = model(text_ids, seq_lens,masks_bert)
-
-            best_path = crf_model.decode(emissions=output, mask=masks_crf)
+            bert_tags = model(text_ids, seq_lens,masks_bert)
+            best_path = model.crf.decode(bert_tags,masks_crf)
             for id, text, path in zip(ids, texts, best_path):
                 arguments = bert_extract_arguments(text, pred_tag=path, schema=schema)
                 event_list = []
@@ -216,7 +212,7 @@ def main(config_file):
     args = argparse.ArgumentParser(description='event extraction')
     args.add_argument('-c', '--config', default=config_file, type=str,
                       help='config file path (default: None)')
-    args.add_argument('-r', '--resume', default='saved/models/seq_label/0419_200954/model_best.pth', type=str,
+    args.add_argument('-r', '--resume', default='saved/models/seq_label/0421_093208/model_best.pth', type=str,
                       help='path to latest checkpoint (default: None)')
     args.add_argument('-d', '--device', default='1', type=str,
                       help='indices of GPUs to enable (default: all)')
@@ -229,7 +225,7 @@ def main(config_file):
         inference(config)
 
 def pipeline():
-    main('configs/rnn_multi_out.json')
+    main('configs/roberta_crf.json')
 
 if __name__ == '__main__':
 

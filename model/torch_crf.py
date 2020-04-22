@@ -8,6 +8,7 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
+from torch.nn.parameter import Parameter
 
 
 class CRF(nn.Module):
@@ -39,15 +40,18 @@ class CRF(nn.Module):
     .. _Viterbi algorithm: https://en.wikipedia.org/wiki/Viterbi_algorithm
     """
 
-    def __init__(self, num_tags: int, batch_first: bool = False) -> None:
+    def __init__(self, num_tags: int,batch_first: bool = False) -> None:
         if num_tags <= 0:
             raise ValueError(f'invalid number of tags: {num_tags}')
         super().__init__()
         self.num_tags = num_tags
         self.batch_first = batch_first
-        self.start_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
-        self.end_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
-        self.transitions = nn.Parameter(torch.empty(num_tags, num_tags)).cuda()
+        # self.start_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
+        # self.end_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
+        # self.transitions = nn.Parameter(torch.empty(num_tags, num_tags)).cuda()
+        self.start_transitions = nn.Parameter(torch.Tensor(num_tags))
+        self.end_transitions = nn.Parameter(torch.Tensor(num_tags))
+        self.transitions = nn.Parameter(torch.Tensor(num_tags, num_tags))
         self.reset_parameters()
 
 

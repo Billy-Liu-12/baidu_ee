@@ -13,11 +13,11 @@ def nll_loss(output, target):
     return F.nll_loss(output, target)
 
 
-def crossentropy_loss(output, target):
+def crossentropy_loss(output, target,device):
     output = output.transpose(1,2)
     weight_ = [1.0] * 435
     weight_[0] = 0.0007
-    weight_ = torch.from_numpy(np.array(weight_)).cuda().float()
+    weight_ = torch.from_numpy(np.array(weight_)).cuda(device).float()
     return F.cross_entropy(output, target,weight=weight_)
 
 

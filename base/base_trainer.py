@@ -8,17 +8,17 @@ class BaseTrainer:
     """
     Base class for all trainers
     """
-    def __init__(self, model, crf_model,criterion, metric_ftns, optimizer, config):
+    def __init__(self, model,criterion, metric_ftns, optimizer, config):
         self.config = config
         self.logger = config.get_logger('trainer', config['trainer']['verbosity'])
 
         # setup GPU device if available, move model into configured device
         self.device, device_ids = self._prepare_device(config['n_gpu'])
         self.model = model.to(self.device)
-        self.crf_model = crf_model.to(self.device)
+        self.model.crf = model.crf.to(self.device)
         if len(device_ids) > 1:
             self.model = torch.nn.DataParallel(model, device_ids=device_ids)
-            self.crf_model = torch.nn.DataParallel(crf_model,device_ids=device_ids)
+            self.model.crf = torch.nn.DataParallel(model.crf,device_ids=device_ids)
 
         self.criterion = criterion
         self.metric_ftns = metric_ftns
@@ -116,8 +116,9 @@ class BaseTrainer:
             self.logger.warning("Warning: The number of GPU\'s configured to use is {}, but only {} are available "
                                 "on this machine.".format(n_gpu_use, n_gpu))
             n_gpu_use = n_gpu
-        device = torch.device('cuda:0' if n_gpu_use > 0 else 'cpu')
-        list_ids = list(range(n_gpu_use))
+        # device = torch.device('cuda:1' if n_gpu_use > 0 else 'cpu')
+        device = torch.device('cuda:{}'.format(self.config.config['device_id']) if n_gpu_use > 0 else 'cpu')
+        list_ids = list(map(lambda x:int(x) ,self.config.config['device_id'].split(',')))
         return device, list_ids
 
     def _save_checkpoint(self, epoch, save_best=False):
@@ -133,7 +134,7 @@ class BaseTrainer:
             'arch': arch,
             'epoch': epoch,
             'state_dict': self.model.state_dict(),
-            'crf_state_dict':self.crf_model.state_dict(),
+            # 'crf_state_dict':self.crf_model.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'monitor_best': self.mnt_best,
             'config': self.config
@@ -163,7 +164,7 @@ class BaseTrainer:
         #     self.logger.warning("Warning: Architecture configuration given in config file is different from that of "
         #                         "checkpoint. This may yield an exception while state_dict is being loaded.")
         self.model.load_state_dict(checkpoint['state_dict'])
-        self.crf_model.load_state_dict(checkpoint['crf_state_dict'])
+        # self.crf_model.load_state_dict(checkpoint['crf_state_dict'])
 
         # load optimizer state from checkpoint only when optimizer type is not changed.
         if checkpoint['config']['optimizer']['type'] != self.config['optimizer']['type']:

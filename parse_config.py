@@ -38,6 +38,7 @@ class ConfigParser:
 
         # save updated config file to the checkpoint dir
         write_json(self.config, self.save_dir / self._config['config_file_name'].split('/')[-1])
+        write_json(self.config, self.save_dir / 'config.json')
 
         # configure logging module
         setup_logging(self.log_dir)
@@ -69,6 +70,7 @@ class ConfigParser:
             cfg_fname = Path(args.config)
 
         config = read_json(cfg_fname)
+        config['device_id'] = args.device
         config['config_file_name'] = args.config
         if args.config and resume:
             # update new config for fine-tuning

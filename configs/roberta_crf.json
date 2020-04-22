@@ -1,0 +1,81 @@
+{
+  "name": "seq_label",
+  "n_gpu": 4,
+  "model_arch": {
+    "type": "Bert_CRF",
+    "args": {
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_large_ext_pytorch",
+      "bert_train": true,
+      "use_class_label": false,
+      "use_event_label": false,
+      "num_class": 10,
+      "num_event": 66,
+      "num_tags": 435,
+      "dropout": 0.5
+    }
+  },
+  "model_arch_crf": {
+    "type": "CRF",
+    "args": {
+      "batch_first": true
+    }
+  },
+  "data_set": {
+    "type": "EEBertDataset",
+    "args": {
+      "data_dir": "data/raw_data/",
+      "file_name": "all_data.json",
+      "valid_size": 0.2,
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_large_ext_pytorch",
+      "use_tag": true,
+      "schema_name": "event_schema.json"
+    }
+  },
+
+  "test1_set": {
+    "type": "EEBertDataset",
+    "args": {
+      "data_dir": "data/raw_data/",
+      "file_name": "test1.json",
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_large_ext_pytorch",
+      "use_tag": false,
+      "schema_name": "event_schema.json"
+    }
+  },
+  "data_loader": {
+    "type": "DataLoader",
+    "args": {
+      "shuffle": true,
+      "batch_size": 5
+    }
+  },
+  "optimizer": {
+    "type": "AdamW",
+    "args": {
+      "lr": 1e-5
+    }
+  },
+  "loss": [
+    "crossentropy_loss"
+  ],
+  "metrics": [
+    "f1",
+    "precision",
+    "recall"
+  ],
+  "lr_scheduler": {
+    "type": "get_linear_schedule_with_warmup",
+    "args": {
+      "num_warmup_steps": 3
+    } 
+  },
+  "trainer": {
+    "epochs": 200,
+    "saved": "saved/",
+    "save_period": 2,
+    "verbosity": 1,
+    "monitor": "max val_f1",
+    "early_stop": 7,
+    "tensorboard": true
+  }
+}

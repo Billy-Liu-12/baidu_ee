@@ -10,6 +10,7 @@ from utils.utils import inf_loop, MetricTracker,extract_arguments,bert_extract_a
 from time import time
 import pylcs
 import torch.nn.functional as F
+from TorchCRF import CRF
 
 class Trainer(BaseTrainer):
     """
@@ -165,10 +166,11 @@ class BertTrainer(BaseTrainer):
     Trainer class
     """
 
-    def __init__(self, model, crf_model,criterion, metric_ftns, optimizer, config, train_iter, valid_iter, schema,test_iter=None,
+    def __init__(self, model,criterion, metric_ftns, optimizer, config, train_iter, valid_iter,device, schema,test_iter=None,
                  lr_scheduler=None, len_epoch=None):
-        super().__init__(model,crf_model, criterion, metric_ftns, optimizer, config)
+        super().__init__(model, criterion, metric_ftns, optimizer, config)
         self.config = config
+        self.device = device
         self.train_iter, self.valid_iter, self.test_iter = train_iter, valid_iter, test_iter
         if len_epoch is None:
             # epoch-based training
@@ -182,8 +184,9 @@ class BertTrainer(BaseTrainer):
         self.lr_scheduler = lr_scheduler
         self.log_step = int(np.sqrt(train_iter.batch_size))
 
-        self.train_metrics = MetricTracker('loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
-        self.valid_metrics = MetricTracker('loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
+        # del self.optimizer.param_groups[2]
+        self.train_metrics = MetricTracker('total_loss','crossentropy_loss','crf_loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
+        self.valid_metrics = MetricTracker('total_loss','crossentropy_loss','crf_loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
 
     def _train_epoch(self, epoch):
         """
@@ -194,29 +197,28 @@ class BertTrainer(BaseTrainer):
         """
         t1 = time()
         self.model.train()
-        self.crf_model.train()
+        self.model.crf.train()
         self.train_metrics.reset()
-        for batch_idx, batch_data in enumerate(self.train_iter):
-            sentence_feature,text_ids, seq_lens, masks_bert, masks_crf, texts, arguments,class_labels,event_labels, seq_tags= batch_data
-            class_labels = torch.LongTensor(np.array(class_labels)).cuda()
-            event_labels = torch.LongTensor(np.array(event_labels)).cuda()
+        for batch_idx, (text_ids, seq_lens, masks_bert, masks_crf, texts, arguments,class_label,event_label, seq_tags) in enumerate(self.train_iter):
+
+
             self.optimizer.zero_grad()
-            out_class,out_event,output = self.model(sentence_feature, seq_lens)
+            pred_tags = self.model(text_ids, seq_lens, masks_bert)
 
-            loss = F.cross_entropy(out_class,class_labels)
-            loss += F.cross_entropy(out_event,event_labels)
-            loss += self.criterion(output, seq_tags)
-
-            loss += -self.crf_model(emissions=output, mask=masks_crf, tags=seq_tags)
-
-            loss.backward()
+            loss_ec = self.criterion[0](pred_tags, seq_tags,self.device)
+            # loss_crf = -self.model.module.crf(emissions=pred_tags, mask=masks_crf, tags=seq_tags)
+            # loss = loss_ec + loss_crf
+            # loss.backward()
+            loss_ec.backward()
             self.optimizer.step()
 
             self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
-            self.train_metrics.update('loss', loss.item())
-            best_path = self.crf_model.decode(emissions=output, mask=masks_crf)
-
-            X, Y, Z = self.evaluate(best_path, texts, arguments)
+            self.train_metrics.update('crossentropy_loss',loss_ec.item())
+            # self.train_metrics.update('crf_loss',loss_crf.item())
+            # self.valid_metrics.update('total_loss', loss.item())
+            # best_path = self.model.module.crf.decode(emissions=pred_tags, mask=masks_crf)
+            max_prob,best_path = torch.max(F.softmax(pred_tags,dim=2),dim=2)
+            X, Y, Z = self.evaluate(best_path.cpu().numpy(), texts, arguments)
             for met in self.metric_ftns:
                 self.train_metrics.update(met.__name__, met(X, Y, Z))
 
@@ -224,13 +226,13 @@ class BertTrainer(BaseTrainer):
                 self.logger.debug('Train Epoch: {} {} Loss: {:.6f}'.format(
                     epoch,
                     self._progress(batch_idx),
-                    loss.item()))
+                    loss_ec.item()))
 
             if batch_idx == self.len_epoch:
                 break
             # 避免挤爆显存
-            # del x, seq_len,mask,y, loss
-            torch.cuda.empty_cache()
+            del pred_tags, seq_lens,masks_bert,masks_crf,texts,text_ids,arguments,class_label,event_label,seq_tags
+            # torch.cuda.empty_cache()
         log = self.train_metrics.result()
 
         if self.do_validation:
@@ -250,30 +252,33 @@ class BertTrainer(BaseTrainer):
         :return: A log that contains information about validation
         """
         self.model.eval()
-        self.crf_model.eval()
+        self.model.crf.eval()
         self.valid_metrics.reset()
         with torch.no_grad():
             for batch_idx, batch_data in enumerate(self.valid_iter):
-                sentence_feature,text_ids, seq_lens, masks_bert, masks_crf, texts, arguments,class_labels,event_labels, seq_tags= batch_data
+                text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, class_label, event_label, seq_tags = batch_data
 
-                out_class, out_event, output = self.model(sentence_feature, seq_lens)
-                loss = F.cross_entropy(out_class, torch.from_numpy(np.array(class_labels)).cuda())
-                loss += F.cross_entropy(out_event, torch.from_numpy(np.array(event_labels)).cuda())
-                loss += self.criterion(output, seq_tags)
-                loss += -self.crf_model(emissions=output, mask=masks_crf, tags=seq_tags)
+                # context, seq_len, mask_bert,mask_crf,class_label,event_label,seq_tags
+                pred_tags = self.model(text_ids, seq_lens, masks_bert)
 
+                loss_ec = self.criterion[0](pred_tags, seq_tags,self.device)
+                # loss_crf = -self.model.module.crf(emissions=pred_tags, mask=masks_crf, tags=seq_tags)
+                # loss = loss_ec + loss_crf
                 self.writer.set_step((epoch - 1) * len(self.valid_iter) + batch_idx, 'valid')
-                self.valid_metrics.update('loss', loss.item())
-                best_path = self.crf_model.decode(emissions=output, mask=masks_crf)
-                X, Y, Z = self.evaluate(best_path, texts, arguments)
+
+                self.valid_metrics.update('crossentropy_loss', loss_ec.item())
+                # self.valid_metrics.update('crf_loss', loss_crf.item())
+                # self.valid_metrics.update('total_loss', loss.item())
+                # best_path = self.model.module.crf.decode(emissions=pred_tags, mask=masks_crf)
+                max_prob, best_path = torch.max(F.softmax(pred_tags, dim=2), dim=2)
+                X, Y, Z = self.evaluate(best_path.cpu().numpy(), texts, arguments)
                 for met in self.metric_ftns:
                     self.valid_metrics.update(met.__name__, met(X, Y, Z))
 
         # add histogram of model parameters to the tensorboard
         for name, p in self.model.named_parameters():
             self.writer.add_histogram(name, p, bins='auto')
-        for name, p in self.crf_model.named_parameters():
-            self.writer.add_histogram(name, p, bins='auto')
+
 
         return self.valid_metrics.result()
 
