@@ -13,13 +13,16 @@ import model.model as module_arch
 from parse_config import ConfigParser
 from utils import utils
 from model import torch_crf as module_arch_crf
-from torch.utils import data as data_loader
-from utils.utils import extract_arguments,bert_extract_arguments,inference_feature_collate_fn
+from torch.utils import data as module_dataloader
+from utils.utils import extract_arguments, bert_extract_arguments, inference_feature_collate_fn, get_restrain_crf
 import json
 import numpy as np
 from torch import nn
 import pylcs
 import pickle
+import torch.nn.functional as F
+from model.metric import precision, recall, f1
+
 
 def restrain(start, trans):
     start_np = start.cpu().data.numpy()  # tags
@@ -38,14 +41,12 @@ def restrain(start, trans):
                     trans_np[i][j] = -10000.0
         if i % 2 == 1:
             for j in range(0, trans_np.shape[1]):
-               if j > 0 and j % 2 == 0 and not j == (i + 1):
+                if j > 0 and j % 2 == 0 and not j == (i + 1):
                     trans_np[i][j] = -10000.0
 
     start = nn.Parameter(torch.FloatTensor(start_np)).cuda()
     trans = nn.Parameter(torch.FloatTensor(trans_np)).cuda()
     return start, trans
-
-
 
 
 def inference(config):
@@ -54,7 +55,7 @@ def inference(config):
 
     word_embedding = config.init_ftn('word_embedding', utils)
     # setup dataset, data_loader instances
-    test_set_ = config.init_obj('test1_set', module_data,device=device)
+    test_set_ = config.init_obj('test1_set', module_data, device=device)
     with open('data/bert_feature/test_feature.pkl', 'rb') as f:
         test_set = pickle.load(f)
     test_dataloader = config.init_obj('data_loader', data_loader, test_set, collate_fn=inference_feature_collate_fn)
@@ -64,8 +65,6 @@ def inference(config):
     logger.info(model)
     crf_model = config.init_obj('model_arch_crf', module_arch_crf, 435)
     logger.info(crf_model)
-
-
 
     logger.info('Loading checkpoint: {} ...'.format(config.resume))
     checkpoint = torch.load(config.resume)
@@ -95,15 +94,15 @@ def inference(config):
     crf_model.eval()
 
     # inference
-    f_txt = open('result.txt','w',encoding='utf8')
+    f_txt = open('result.txt', 'w', encoding='utf8')
     f_result = open('result.json', 'w', encoding='utf8')
     schema = test_set_.schema
     with torch.no_grad():
         for i, batch_data in enumerate(tqdm(test_dataloader)):
 
-            ids, sentence_feature,text_ids, seq_lens, masks_bert,masks_crf, texts = batch_data
+            ids, sentence_feature, text_ids, seq_lens, masks_bert, masks_crf, texts = batch_data
 
-            out_class,out_event,out_tag = model(sentence_feature, seq_lens)
+            out_class, out_event, out_tag = model(sentence_feature, seq_lens)
 
             best_path = crf_model.decode(emissions=out_tag, mask=masks_crf)
             for id, text, path in zip(ids, texts, best_path):
@@ -126,64 +125,115 @@ def inference(config):
                 res['id'] = id
                 res['text'] = text
                 res['event_list'] = event_list
-                f_txt.write(str(res)+'\n')
+                f_txt.write(str(res) + '\n')
     f_result.close()
     f_txt.close()
 
-def bert_inference(config):
+
+def bert_evalution(config):
+    def evaluate(batch_pred_tag, batch_text, batch_arguments):
+        """评测函数（跟官方评测结果不一定相同，但很接近）
+        """
+
+        X, Y, Z = 1e-10, 1e-10, 1e-10
+
+        for pred_tag, text, arguments in zip(batch_pred_tag, batch_text, batch_arguments):
+
+            inv_arguments_label = {v: k for k, v in arguments.items()}
+            pred_arguments = bert_extract_arguments(text, pred_tag, schema)
+            pred_inv_arguments = {v: k for k, v in pred_arguments.items()}
+            Y += len(pred_inv_arguments)
+            Z += len(inv_arguments_label)
+            for k, v in pred_inv_arguments.items():
+                if k in inv_arguments_label:
+                    # 用最长公共子串作为匹配程度度量
+                    l = pylcs.lcs(v, inv_arguments_label[k])
+                    X += 2. * l / (len(v) + len(inv_arguments_label[k]))
+        # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
+
+        return X, Y, Z
+
     logger = config.get_logger('test')
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:{}'.format(config.config['device_id']) if config.config['n_gpu'] > 0 else 'cpu')
 
     # setup dataset, data_loader instances
-    test_set = config.init_obj('test1_set', module_data,device=device)
-    test_dataloader = config.init_obj('data_loader', data_loader, test_set, collate_fn=test_set.inference_collate_fn)
-
+    data_set = config.init_obj('data_set', module_data, device=device)
+    valid_dataloader = config.init_obj('data_loader', module_dataloader, data_set.valid_set,
+                                       collate_fn=data_set.seq_tag_collate_fn)
     # build model architecture
-    model = config.init_obj('model_arch', module_arch,device=device)
+    model = config.init_obj('model_arch', module_arch)
     logger.info(model)
-
-    # get function handles of loss and metrics
-    loss_fn = getattr(module_loss, config['loss'])
-    metric_fns = [getattr(module_metric, met) for met in config['metrics']]
 
     logger.info('Loading checkpoint: {} ...'.format(config.resume))
     checkpoint = torch.load(config.resume)
     state_dict = checkpoint['state_dict']
-    # crf_state_dict = checkpoint['crf_state_dict']
-    # if config['n_gpu'] > 1:
-    #     model = torch.nn.DataParallel(model)
 
-    model.load_state_dict({k.replace('module.',''):v for k,v in state_dict.items()})
-
-    model.crf.start_transitions, model.crf.transitions = \
-        restrain(model.crf.start_transitions, model.crf.transitions)
+    model.load_state_dict({k.replace('module.', ''): v for k, v in state_dict.items()})
 
     # prepare model for testing
     model = model.to(device)
-    model.crf.to(device)
-
-    # O:0 B：2id+1 I：2id+2
-    '''
-        self.start_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
-        self.end_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
-        self.transitions = nn.Parameter(torch.empty(num_tags, num_tags)).cuda()
-    '''
+    # model.crf.to(device)
 
     model.eval()
     model.crf.eval()
-
-    total_loss = 0.0
-    total_metrics = torch.zeros(len(metric_fns))
+    # model.crf.reset_parameters()
 
     # inference
-    f_txt = open('result.txt','w',encoding='utf8')
+    schema = data_set.schema
+    recalls = []
+    precisions = []
+    f1s = []
+    with torch.no_grad():
+        for i, batch_data in enumerate(tqdm(valid_dataloader)):
+            text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, class_label, event_label, seq_tags = batch_data
+            pred_tags = model(text_ids, seq_lens, masks_bert)
+            # max_prob, best_path = torch.max(F.softmax(pred_tags, dim=2), dim=2)
+            pred_tags = torch.log_softmax(pred_tags, dim=2)
+            best_path = model.crf.decode(pred_tags, masks_crf)
+            X, Y, Z = evaluate(best_path, texts, arguments)
+            recalls.append(recall(X, Y, Z))
+            precisions.append(precision(X, Y, Z))
+            f1s.append(f1(X, Y, Z))
+        print('precision:{},recall:{},f1:{}'.format(sum(precisions) / len(precisions), sum(recalls) / len(recalls),
+                                                    sum(f1s) / len(f1s)))
+
+
+def bert_inference(config):
+    logger = config.get_logger('test')
+    device = torch.device('cuda:{}'.format(config.config['device_id']) if config.config['n_gpu'] > 0 else 'cpu')
+
+    # setup dataset, data_loader instances
+    data_set = config.init_obj('test1_set', module_data, device=device)
+    test_dataloader = config.init_obj('data_loader', module_dataloader, data_set,
+                                      collate_fn=data_set.inference_collate_fn)
+
+    # build model architecture
+    restrain = get_restrain_crf(device)
+    model = config.init_obj('model_arch', module_arch, seg_vocab_size=5, pos_vocab_size=32, ner_vocab_size=5,
+                            restrain=restrain, device=device)
+    logger.info(model)
+
+    logger.info('Loading checkpoint: {} ...'.format(config.resume))
+    checkpoint = torch.load(config.resume)
+    state_dict = checkpoint['state_dict']
+    if config['n_gpu'] > 1:
+        device_ids = list(map(lambda x:int(x),config.config['device_id'].split(',')))
+        model = torch.nn.DataParallel(model, device_ids=device_ids)
+    model.load_state_dict(state_dict)
+
+    # prepare model for testing
+    model = model.to(device)
+    model.eval()
+
+    # inference
+    f_txt = open('result.txt', 'w', encoding='utf8')
     f_result = open('result.json', 'w', encoding='utf8')
-    schema = test_set.schema
+    schema = data_set.schema
     with torch.no_grad():
         for i, batch_data in enumerate(tqdm(test_dataloader)):
-            ids, text_ids, seq_lens, masks_bert, masks_crf, texts = batch_data
-            bert_tags = model(text_ids, seq_lens,masks_bert)
-            best_path = model.crf.decode(bert_tags,masks_crf)
+            ids, text_ids, seq_lens, masks_bert, masks_crf, texts,seg_feature,pos_feature,ner_feature = batch_data
+            pred_class, pred_event, pred_tags = model(text_ids, seq_lens, masks_bert, seg_feature, pos_feature,ner_feature)
+            best_path = model.module.crf.decode(pred_tags, masks_crf)
             for id, text, path in zip(ids, texts, best_path):
                 arguments = bert_extract_arguments(text, pred_tag=path, schema=schema)
                 event_list = []
@@ -208,26 +258,28 @@ def bert_inference(config):
     f_result.close()
     f_txt.close()
 
+
 def main(config_file):
     args = argparse.ArgumentParser(description='event extraction')
     args.add_argument('-c', '--config', default=config_file, type=str,
                       help='config file path (default: None)')
-    args.add_argument('-r', '--resume', default='saved/models/seq_label/0421_093208/model_best.pth', type=str,
+    args.add_argument('-r', '--resume', default='saved/models/seq_label/0429_083739/model_best.pth', type=str,
                       help='path to latest checkpoint (default: None)')
-    args.add_argument('-d', '--device', default='1', type=str,
+    args.add_argument('-d', '--device', default='2,1,0,3', type=str,
                       help='indices of GPUs to enable (default: all)')
 
     config = ConfigParser.from_args(args)
     # 是否使用bert作为预训练模型
     if 'bert' in config.config['config_file_name'].lower():
         bert_inference(config)
+        # bert_evalution(config)
     else:
         inference(config)
 
-def pipeline():
-    main('configs/roberta_crf.json')
+
+
+
+
 
 if __name__ == '__main__':
-
-    pipeline()
-    # saved/models/seq_label/0419_160124/checkpoint-epoch1.pth
+    main('configs/roberta_crf_0.json')

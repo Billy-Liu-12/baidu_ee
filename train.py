@@ -212,7 +212,7 @@ def run_main(config_file):
 
 
 def pipeline():
-    run_main('configs/roberta_crf.json')
+    run_main('configs/roberta_crf_0.json')
 
 
 if __name__ == '__main__':

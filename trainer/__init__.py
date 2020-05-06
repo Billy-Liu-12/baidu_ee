@@ -3,4 +3,4 @@
 # @Author  : lizhen
 # @FileName: __init__.py.py
 # @Description:
-from .trainer import *
+from .bert_trainer import *

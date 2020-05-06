@@ -1,38 +1,32 @@
 {
   "name": "seq_label",
-  "n_gpu": 1,
+  "n_gpu": 3,
   "model_arch": {
-    "type": "Bert",
+    "type": "Bert_Text_Cls",
     "args": {
-      "bert_path": "data/pretrained_model/chinese_wwm_ext_pytorch",
-      "bert_train": false
-    }
-  },
-  "model_arch_crf": {
-    "type": "CRF",
-    "args": {
-      "batch_first": true
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_ext_pytorch",
+      "bert_train": true,
+      "dropout": 0.5,
+      "num_classes": 9
     }
   },
   "data_set": {
-    "type": "EEBertDataset",
+    "type": "TextClsDataset",
     "args": {
       "data_dir": "data/raw_data/",
       "file_name": "all_data.json",
-      "valid_size": 0.2,
-      "bert_path": "data/pretrained_model/chinese_wwm_ext_pytorch",
-      "use_tag": true,
+      "valid_size": 0.15,
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_ext_pytorch",
       "schema_name": "event_schema.json"
     }
   },
 
   "test1_set": {
-    "type": "EEBertDataset",
+    "type": "TextClsDataset",
     "args": {
       "data_dir": "data/raw_data/",
       "file_name": "test1.json",
-      "bert_path": "data/pretrained_model/chinese_wwm_ext_pytorch",
-      "use_tag": false,
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_ext_pytorch",
       "schema_name": "event_schema.json"
     }
   },
@@ -40,16 +34,17 @@
     "type": "DataLoader",
     "args": {
       "shuffle": true,
-      "batch_size": 4
+      "batch_size": 20
     }
   },
   "optimizer": {
     "type": "AdamW",
     "args": {
-
     }
   },
-  "loss": "crossentropy_loss",
+  "loss": [
+    "crossentropy_loss"
+  ],
   "metrics": [
     "f1",
     "precision",
@@ -58,13 +53,13 @@
   "lr_scheduler": {
     "type": "get_linear_schedule_with_warmup",
     "args": {
-      "num_warmup_steps": 5
+      "num_warmup_steps": 3
     }
   },
   "trainer": {
     "epochs": 200,
-    "saved": "saved/",
-    "save_period": 1,
+    "saved": "saved/text_cls/inference",
+    "save_period": 2,
     "verbosity": 1,
     "monitor": "max val_f1",
     "early_stop": 7,

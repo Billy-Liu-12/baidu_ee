@@ -8,9 +8,6 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
-from torch.nn.parameter import Parameter
-import pickle
-
 
 
 class CRF(nn.Module):
@@ -42,22 +39,38 @@ class CRF(nn.Module):
     .. _Viterbi algorithm: https://en.wikipedia.org/wiki/Viterbi_algorithm
     """
 
-    def __init__(self, num_tags: int,batch_first: bool = False) -> None:
+    def __init__(self, num_tags: int, batch_first: bool = False, restrain_matrix: list = None,
+                 loss_side: float = None) -> None:
         if num_tags <= 0:
             raise ValueError(f'invalid number of tags: {num_tags}')
         super().__init__()
         self.num_tags = num_tags
         self.batch_first = batch_first
-        # self.start_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
-        # self.end_transitions = nn.Parameter(torch.empty(num_tags)).cuda()
-        # self.transitions = nn.Parameter(torch.empty(num_tags, num_tags)).cuda()
         self.start_transitions = nn.Parameter(torch.Tensor(num_tags))
         self.end_transitions = nn.Parameter(torch.Tensor(num_tags))
         self.transitions = nn.Parameter(torch.Tensor(num_tags, num_tags))
+        self.restrain_start = None
+        self.restrain_end = None
+        self.restrain_trans = None
+        self.loss_side = loss_side
+
+        if restrain_matrix:
+            self.restrain_start = restrain_matrix[0]
+            self.restrain_end = restrain_matrix[1]
+            self.restrain_trans = restrain_matrix[2]
+
+        # 输入转移矩阵的限制，为tensor，这个限制加入forward，每次forward替换restrain部分
+        # 其中要指定转移概率为0的位置 给出-1000.0 的标签，转移概率为1的部分给出10.0的 标签，其余位置给0进行随机初始化
+
         self.reset_parameters()
 
-
-
+    def restrain(self):
+        self.start_transitions = nn.Parameter(
+            torch.where(self.restrain_start == -1000., self.restrain_start, self.start_transitions))
+        self.end_transitions = nn.Parameter(
+            torch.where(self.restrain_end == -1000., self.restrain_end, self.end_transitions))
+        self.transitions = nn.Parameter(
+            torch.where(self.restrain_trans == -1000., self.restrain_trans, self.transitions))
 
     def reset_parameters(self) -> None:
         """Initialize the transition parameters.
@@ -99,6 +112,7 @@ class CRF(nn.Module):
             `~torch.Tensor`: The log likelihood. This will have size ``(batch_size,)`` if
             reduction is ``none``, ``()`` otherwise.
         """
+        self.restrain()
         self._validate(emissions, tags=tags, mask=mask)
         if reduction not in ('none', 'sum', 'mean', 'token_mean'):
             raise ValueError(f'invalid reduction: {reduction}')
@@ -111,11 +125,14 @@ class CRF(nn.Module):
             mask = mask.transpose(0, 1)
 
         # shape: (batch_size,)
-        numerator = self._compute_score(emissions, tags, mask)
+        numerator = self._compute_score(emissions, tags, mask)  # 输出target的对数似然
         # shape: (batch_size,)
-        denominator = self._compute_normalizer(emissions, mask)
+        denominator = self._compute_normalizer(emissions, mask)  # 输出
         # shape: (batch_size,)
-        llh = numerator - denominator
+        llh = denominator - numerator
+
+        cut = self.loss_side * torch.ones_like(llh, dtype=llh.dtype)
+        llh = torch.where(llh < cut, cut, llh)
 
         if reduction == 'none':
             return llh
@@ -232,7 +249,7 @@ class CRF(nn.Module):
         # (batch_size, num_tags) where for each batch, the j-th column stores
         # the score that the first timestep has tag j
         # shape: (batch_size, num_tags)
-        score = self.start_transitions + emissions[0]
+        score = self.start_transitions + emissions[0]  # 首尾是每个标签的似然
 
         for i in range(1, seq_length):
             # Broadcast score for every possible next tag
@@ -242,6 +259,7 @@ class CRF(nn.Module):
             # Broadcast emission score for every possible current tag
             # shape: (batch_size, 1, num_tags)
             broadcast_emissions = emissions[i].unsqueeze(1)
+            # 第i位是每个标签的输出概率似然
 
             # Compute the score tensor of size (batch_size, num_tags, num_tags) where
             # for each sample, entry at row i and column j stores the sum of scores of all
@@ -255,6 +273,7 @@ class CRF(nn.Module):
             # all possible tag sequences so far, that end in tag i
             # shape: (batch_size, num_tags)
             next_score = torch.logsumexp(next_score, dim=1)
+            # 输入第i位是每个标签的似然
 
             # Set score to the next score if this timestep is valid (mask == 1)
             # shape: (batch_size, num_tags)

@@ -1,16 +1,16 @@
 {
   "name": "seq_label",
-  "n_gpu": 4,
+  "n_gpu": 1,
   "model_arch": {
-    "type": "Bert_CRF",
+    "type": "BertRNNCRF",
     "args": {
-      "bert_path": "data/pretrained_model/chinese_roberta_wwm_large_ext_pytorch",
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_ext_pytorch",
       "bert_train": true,
-      "use_class_label": false,
-      "use_event_label": false,
-      "num_class": 10,
-      "num_event": 66,
-      "num_tags": 435,
+      "rnn_type": "lstm",
+      "hidden_dim": 128,
+      "n_layers": 2,
+      "bidirectional": true,
+      "batch_first": true,
       "dropout": 0.5
     }
   },
@@ -25,9 +25,9 @@
     "args": {
       "data_dir": "data/raw_data/",
       "file_name": "all_data.json",
-      "valid_size": 0.2,
-      "bert_path": "data/pretrained_model/chinese_roberta_wwm_large_ext_pytorch",
-      "use_tag": true,
+      "valid_size": 0.15,
+            "class_id": 5,
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_ext_pytorch",
       "schema_name": "event_schema.json"
     }
   },
@@ -35,24 +35,22 @@
   "test1_set": {
     "type": "EEBertDataset",
     "args": {
-      "data_dir": "data/raw_data/",
-      "file_name": "test1.json",
-      "bert_path": "data/pretrained_model/chinese_roberta_wwm_large_ext_pytorch",
-      "use_tag": false,
-      "schema_name": "event_schema.json"
+      "data_dir": "data/cls_result/",
+      "file_name": "test1_5.json",
+      "bert_path": "data/pretrained_model/chinese_roberta_wwm_ext_pytorch",
+      "class_id": 5,
+      "schema_name": "data/raw_data/event_schema.json"
     }
   },
   "data_loader": {
     "type": "DataLoader",
     "args": {
-      "shuffle": true,
-      "batch_size": 5
+      "shuffle": true
     }
   },
   "optimizer": {
     "type": "AdamW",
     "args": {
-      "lr": 1e-5
     }
   },
   "loss": [
@@ -71,11 +69,11 @@
   },
   "trainer": {
     "epochs": 200,
-    "saved": "saved/",
+    "saved": "saved/tag/5",
     "save_period": 2,
     "verbosity": 1,
-    "monitor": "max val_f1",
-    "early_stop": 7,
+    "monitor": "max val_F_all",
+    "early_stop": 10,
     "tensorboard": true
   }
 }
