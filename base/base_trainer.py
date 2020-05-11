@@ -102,6 +102,7 @@ class BaseTrainer:
 
             if epoch % self.save_period == 0:
                 self._save_checkpoint(epoch, save_best=best)
+        return self.checkpoint_dir
 
     def _prepare_device(self, n_gpu_use):
         """
@@ -162,7 +163,14 @@ class BaseTrainer:
         if checkpoint['config'].config['model_arch'] != self.config.config['model_arch']:
             self.logger.warning("Warning: Architecture configuration given in config file is different from that of "
                                 "checkpoint. This may yield an exception while state_dict is being loaded.")
-        self.model.load_state_dict(checkpoint['state_dict'])
+        ########################################
+        # self.model.load_state_dict(checkpoint['state_dict'])
+        params = {k:v for k,v in checkpoint['state_dict'].items() if 'crf' not in k and 'fc_tags' not in k}
+        model_dict = self.model.state_dict()
+        model_dict.update(params)
+        self.model.load_state_dict(model_dict)
+
+        ##############################################################
 
         # load optimizer state from checkpoint only when optimizer type is not changed.
         if checkpoint['config']['optimizer']['type'] != self.config['optimizer']['type']:

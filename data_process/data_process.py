@@ -16,6 +16,7 @@ from sklearn.model_selection import train_test_split
 import jieba
 import numpy as np
 from pyltp import SentenceSplitter, Postagger, NamedEntityRecognizer, Parser
+import copy
 
 
 class Argument():
@@ -48,7 +49,9 @@ class EESchema():
         self.role2id = role2id
         self.id2role = id2role
         self.move = {0: 0, 1: 66, 2: 100, 3: 132, 4: 170, 5: 238, 6: 288, 7: 360, 8: 406}
+        self.event_move = {0: 0, 1: 9, 2: 14, 3: 19, 4: 25, 5: 37, 6: 45, 7: 53, 8: 61}
         self.class_tag_num = {0: 67, 1: 35, 2: 33, 3: 39, 4: 69, 5: 51, 6: 73, 7: 47, 8: 29}
+        self.event_num = {0: 9, 1: 5, 2: 5, 3: 6, 4: 12, 5: 8, 6: 8, 7: 8, 8: 4}
 
 
 class InputExample():
@@ -66,7 +69,9 @@ class InputExample():
         self.seq_tag_id = []  # 用于序列标注的label
         self.bert_idx_map_seg_idx = []
         self.seg_idx_map_text = []
-        self.adj_matrix = []
+        self.adj_matrix_subject = []
+        self.adj_matrix_others = []
+        self.adj_matrix_object = []
         self.kernal_verb = []
 
 
@@ -342,7 +347,7 @@ class EEBertDataset(Dataset):
             self.schema = self._load_schema(os.path.join(data_dir, schema_name))
             self.num_tag_labels = len(self.schema.role2id) * 2 + 1  # B I O
             self.data = self._load_dataset()
-            self.data = self.convert_data_single_sentence_multi_event()
+            self.data = self.convert_data_single_sentence_single_event()
             self.convert_set_tag_2_dict_tag()
             self.train_set, self.valid_set = train_test_split(self.data, test_size=valid_size, random_state=13)
         else:
@@ -399,6 +404,43 @@ class EEBertDataset(Dataset):
         """该数据集的相关统计信息"""
         pass
 
+    def convert_data_single_sentence_single_event(self):
+        examples = []
+        for data in self.data:
+            text = data.text
+            tokenized_text = data.text_token
+            self.seg_tag_set.update(data.text_seg_tag)
+
+            arguments = {}
+            for e in data.events:
+                seq_tag = copy.deepcopy(e.text_seq_tags_id)
+                for a in e.arguments:
+                    index = a.role.rfind('-')
+                    arguments[a.argument + "_" + a.role] = (a.role[:index], a.role[index + 1:])
+
+                begin = 0
+                for i in range(len(seq_tag)):
+                    if seq_tag[i] % 2 == 1:
+                        begin = seq_tag[i]
+                        continue
+                    if seq_tag[i] > 0:
+                        if not (seq_tag[i] - begin) == 1:
+                            seq_tag[i] = seq_tag[i] - 1
+                            begin = seq_tag[i]
+                            continue
+                    if seq_tag[i] == 0:
+                        begin = 0
+
+                for i in range(len(seq_tag)):
+                    if seq_tag[i]:
+                        seq_tag[i] = seq_tag[i] - self.schema.move[self.class_id]
+
+                examples.append((data.text_token_id, seq_tag, text, arguments, tokenized_text, data.text_seg_tag,
+                                 data.text_map_seg_idx, data.seg_idx_map_bert_idx, data.bert_idx_map_seg_idx,
+                                 data.seg_idx_map_text, data.adj_matrix_subject, data.adj_matrix_object,
+                                 data.adj_matrix_others, data.kernal_verb, e.event_type_id-self.schema.event_move[self.class_id]))
+        return examples
+
     def convert_data_single_sentence_multi_event(self):
         examples = []
         for data in self.data:
@@ -419,6 +461,18 @@ class EEBertDataset(Dataset):
                 for i in range(len(text_seq_tags[0])):  # col
                     for j in range(1, len(text_seq_tags)):  # row
                         seq_tag[i] = text_seq_tags[j][i] or seq_tag[i]
+            begin = 0
+            for i in range(len(seq_tag)):
+                if seq_tag[i] % 2 == 1:
+                    begin = seq_tag[i]
+                    continue
+                if seq_tag[i] > 0:
+                    if not (seq_tag[i] - begin) == 1:
+                        seq_tag[i] = seq_tag[i] - 1
+                        begin = seq_tag[i]
+                        continue
+                if seq_tag[i] == 0:
+                    begin = 0
 
             for i in range(len(seq_tag)):
                 if seq_tag[i]:
@@ -426,7 +480,8 @@ class EEBertDataset(Dataset):
 
             examples.append((data.text_token_id, seq_tag, text, arguments, tokenized_text, data.text_seg_tag,
                              data.text_map_seg_idx, data.seg_idx_map_bert_idx, data.bert_idx_map_seg_idx,
-                             data.seg_idx_map_text,data.adj_matrix,data.kernal_verb))
+                             data.seg_idx_map_text, data.adj_matrix_subject, data.adj_matrix_object,
+                             data.adj_matrix_others, data.kernal_verb))
         return examples
 
     def _load_testset(self):
@@ -434,6 +489,12 @@ class EEBertDataset(Dataset):
         加载测试集
         :return:
         """
+        par_model_path = os.path.join(self.ltp_dir, 'parser.model')
+        pos_model_path = os.path.join(self.ltp_dir, 'pos.model')
+        postagger = Postagger()
+        postagger.load(pos_model_path)
+        parser = Parser()
+        parser.load(par_model_path)
 
         examples = []
         with open(os.path.join(self.data_dir, self.file_name)) as f:
@@ -441,7 +502,11 @@ class EEBertDataset(Dataset):
                 l = json.loads(l)
                 # 分词 pos ner : 中文命名实体识别是字符级模型（bert），所以用 list将字符串转换为字符列表。至于输出，格式为 (entity, type, begin, end)。
                 text_seg = jieba.lcut(l['text'], HMM=False)
-                examples.append(self.align_bert_4_inference(l, text_seg))
+                poses = ' '.join(postagger.postag(text_seg)).split()
+                arcs = parser.parse(text_seg, poses)
+                arcses = ' '.join(
+                    "%d:%s" % (arc.head, arc.relation) for arc in arcs).split()
+                examples.append(self.align_bert_4_inference(l, text_seg, arcses))
 
         return examples
 
@@ -459,7 +524,7 @@ class EEBertDataset(Dataset):
 
         examples = []
         if not os.path.exists(
-                os.path.join(self.data_dir, self.file_name.split('.')[0] + '{}_.pkl'.format(self.class_id))):
+                os.path.join(self.data_dir, self.file_name.split('.')[0] + '_{}_.pkl'.format(self.class_id))):
             with open(os.path.join(self.data_dir, self.file_name)) as f:
                 for l in tqdm(f):
                     l = json.loads(l)
@@ -568,42 +633,39 @@ class EEBertDataset(Dataset):
 
         return ner_tag_align_bert[1:]
 
-    def align_bert_4_inference(self, l, text_seg):
-        input_example = InputExample(id=l['id'], text=l['text'])
-
-        bert_tokens, text_map_seg_idx, seg_idx_map_bert_idx, bert_idx_map_seg_idx, seg_idx_map_text = self.text_map_bert(
-            text_seg)
-        seg_tag_align_bert = self.align_segword_2_bert(seg_idx_map_bert_idx)
-        assert len(bert_tokens) - 1 == len(seg_tag_align_bert)
-
-        input_example.text_token = bert_tokens
-        input_example.text_token_id = self.tokenizer.encode(bert_tokens, add_special_tokens=False)
-        input_example.text_seg_tag = seg_tag_align_bert
-        input_example.seg_idx_map_bert_idx = seg_idx_map_bert_idx
-        input_example.text_map_seg_idx = text_map_seg_idx
-        input_example.bert_idx_map_seg_idx = bert_idx_map_seg_idx
-        input_example.seg_idx_map_text = seg_idx_map_text
-
-        return input_example
-
-    def align_bert(self, l, text_seg, arcses):
-        """"""
+    def align_bert_4_inference(self, l, text_seg, arcses):
         input_example = InputExample(id=l['id'], text=l['text'])
 
         bert_tokens, text_map_seg_idx, seg_idx_map_bert_idx, bert_idx_map_seg_idx, seg_idx_map_text = self.text_map_bert(
             text_seg)
         seg_tag_align_bert = self.align_segword_2_bert(seg_idx_map_bert_idx)
 
-        adj_matrix = np.zeros((len(bert_tokens), len(bert_tokens)))
+        adj_matrix_object = np.zeros((len(bert_tokens), len(bert_tokens)))
+        adj_matrix_subject = np.zeros((len(bert_tokens), len(bert_tokens)))
+        adj_matrix_others = np.zeros((len(bert_tokens), len(bert_tokens)))
+        obj_relation = {
+            'VOB',
+            'IOB',
+            'FOB'
+        }
+        adj_matrix_back = np.zeros((len(bert_tokens), len(bert_tokens)))
 
         kernal_verb = [0] * len(bert_tokens)
         for idx, a in enumerate(arcses):
             if not (int(a.split(':')[0]) - 1) == 0:
                 b_father, e_father = seg_idx_map_bert_idx[int(a.split(':')[0]) - 1]
                 b_son, e_son = seg_idx_map_bert_idx[idx]
-                if b_father == e_father:
+                if b_father == e_father or b_son == e_son:
                     continue
-                adj_matrix[b_son:e_son, b_father:e_father] = 1 / (e_father - b_father)
+                adj_matrix_others[b_father:e_father, b_son:e_son] = 1 / (e_son - b_son)
+
+                if a.split(':')[1] in obj_relation:
+                    adj_matrix_object[b_son:e_son, b_father:e_father] = 1 / (e_father - b_father)
+                elif a.split(':')[1] == 'SBV':
+                    adj_matrix_subject[b_son:e_son, b_father:e_father] = 1 / (e_father - b_father)
+                else:
+                    adj_matrix_others[b_son:e_son, b_father:e_father] = 1 / (e_father - b_father)
+
                 if a.split(':')[1] in self.verb:
                     kernal_verb[int(a.split(':')[0]) - 1] = 1
                 if a.split(':')[1] == 'HED':
@@ -618,7 +680,64 @@ class EEBertDataset(Dataset):
         input_example.text_map_seg_idx = text_map_seg_idx
         input_example.bert_idx_map_seg_idx = bert_idx_map_seg_idx
         input_example.seg_idx_map_text = seg_idx_map_text
-        input_example.adj_matrix = adj_matrix
+        input_example.adj_matrix_subject = adj_matrix_subject
+        input_example.adj_matrix_object = adj_matrix_object
+        input_example.adj_matrix_others = adj_matrix_others
+        input_example.kernal_verb = kernal_verb
+
+        return input_example
+
+    def align_bert(self, l, text_seg, arcses):
+        """"""
+        input_example = InputExample(id=l['id'], text=l['text'])
+
+        bert_tokens, text_map_seg_idx, seg_idx_map_bert_idx, bert_idx_map_seg_idx, seg_idx_map_text = self.text_map_bert(
+            text_seg)
+        seg_tag_align_bert = self.align_segword_2_bert(seg_idx_map_bert_idx)
+
+        adj_matrix_object = np.zeros((len(bert_tokens), len(bert_tokens)))
+        adj_matrix_subject = np.zeros((len(bert_tokens), len(bert_tokens)))
+        adj_matrix_others = np.zeros((len(bert_tokens), len(bert_tokens)))
+        obj_relation = {
+            'VOB',
+            'IOB',
+            'FOB'
+        }
+        adj_matrix_back = np.zeros((len(bert_tokens), len(bert_tokens)))
+
+        kernal_verb = [0] * len(bert_tokens)
+        for idx, a in enumerate(arcses):
+            if not (int(a.split(':')[0]) - 1) == 0:
+                b_father, e_father = seg_idx_map_bert_idx[int(a.split(':')[0]) - 1]
+                b_son, e_son = seg_idx_map_bert_idx[idx]
+                if b_father == e_father or b_son == e_son:
+                    continue
+                adj_matrix_others[b_father:e_father, b_son:e_son] = 1 / (e_son - b_son)
+
+                if a.split(':')[1] in obj_relation:
+                    adj_matrix_object[b_son:e_son, b_father:e_father] = 1 / (e_father - b_father)
+                elif a.split(':')[1] == 'SBV':
+                    adj_matrix_subject[b_son:e_son, b_father:e_father] = 1 / (e_father - b_father)
+                else:
+                    adj_matrix_others[b_son:e_son, b_father:e_father] = 1 / (e_father - b_father)
+
+                if a.split(':')[1] in self.verb:
+                    kernal_verb[int(a.split(':')[0]) - 1] = 1
+                if a.split(':')[1] == 'HED':
+                    kernal_verb[idx] = 1
+
+        assert len(bert_tokens) - 1 == len(seg_tag_align_bert)
+
+        input_example.text_token = bert_tokens
+        input_example.text_token_id = self.tokenizer.encode(bert_tokens, add_special_tokens=False)
+        input_example.text_seg_tag = seg_tag_align_bert
+        input_example.seg_idx_map_bert_idx = seg_idx_map_bert_idx
+        input_example.text_map_seg_idx = text_map_seg_idx
+        input_example.bert_idx_map_seg_idx = bert_idx_map_seg_idx
+        input_example.seg_idx_map_text = seg_idx_map_text
+        input_example.adj_matrix_subject = adj_matrix_subject
+        input_example.adj_matrix_object = adj_matrix_object
+        input_example.adj_matrix_others = adj_matrix_others
         input_example.kernal_verb = kernal_verb
         for e in l['event_list']:
             if not self.schema.class2id[e['class']] == self.class_id:
@@ -688,10 +807,14 @@ class EEBertDataset(Dataset):
         data[7]:seg_idx_map_bert_idx
         data[8]: bert_idx_map_seg_idx
         data[9]:seg_idx_map_text
-        data[10]:adj_matrix
-        data[11]:kernal_verb
+        data[10]:adj_matrix_subject
+        data[11]:adj_matrix_object
+        data[12]:adj_matrix_other
+        data[13]:kernal_verb
+        data[14]:event_id
         data.text_token_id, seq_tag, text, arguments, tokenized_text, data.text_seg_tag,data.text_map_seg_idx,
-        data.seg_idx_map_bert_idx,data.bert_idx_map_seg_idx,data.seg_idx_map_text,data.adj_matrix,data.kernal_verb
+        data.seg_idx_map_bert_idx,data.bert_idx_map_seg_idx,data.seg_idx_map_text,data.adj_matrix_subject,
+        data.adj_matrix_object,data.adj_matrix_others,data.kernal_verb
         """
         seq_lens = []  # 记录每个句子的长度
         text_ids = []  # 训练数据text_token_id
@@ -706,11 +829,15 @@ class EEBertDataset(Dataset):
         seg_idx_map_bert_idxs = []
         bert_idx_map_seg_idxs = []
         seg_idx_map_texts = []
-        adj_matrixes = []
+        adj_matrixe_subjects = []
+        adj_matrixe_objects = []
+        adj_matrixe_others = []
         kernal_verbs = []
+        event_labels = []
 
         max_seq_len = len(max(datas, key=lambda x: len(x[0]))[0])  # 该batch中句子的最大长度
         for data in datas:
+            event_labels.append(data[14])
             raw_texts.append(data[2])
             seq_len = len(data[0])
             seq_lens.append(seq_len)
@@ -725,10 +852,21 @@ class EEBertDataset(Dataset):
 
             seq_tags.append(data[1] + [0] * (max_seq_len - seq_len))
             masks_crf.append(mask_crf + [0] * (max_seq_len - seq_len))
-            kernal_verbs.append(data[11]+[0]*(max_seq_len-seq_len))
-            trans_adj_matrix = np.zeros((max_seq_len,max_seq_len))
-            trans_adj_matrix[:seq_len,:seq_len] = data[10]
-            adj_matrixes.append(trans_adj_matrix)
+            kernal_verbs.append(data[13] + [0] * (max_seq_len - seq_len))
+            # subject
+            trans_adj_matrix_subject = np.zeros((max_seq_len, max_seq_len))
+            trans_adj_matrix_subject[:seq_len, :seq_len] = data[10]
+            adj_matrixe_subjects.append(trans_adj_matrix_subject)
+
+            # object
+            trans_adj_matrix_object = np.zeros((max_seq_len, max_seq_len))
+            trans_adj_matrix_object[:seq_len, :seq_len] = data[11]
+            adj_matrixe_objects.append(trans_adj_matrix_object)
+
+            # other
+            trans_adj_matrix_other = np.zeros((max_seq_len, max_seq_len))
+            trans_adj_matrix_other[:seq_len, :seq_len] = data[12]
+            adj_matrixe_others.append(trans_adj_matrix_other)
 
             seg_feature.append(self.encoder_sentence_seg_tag(data[5], max_seq_len))
             text_map_seg_idxs.append(data[6])
@@ -752,10 +890,14 @@ class EEBertDataset(Dataset):
         seq_lens = torch.LongTensor(np.array(seq_lens)).cuda()
         seg_feature = torch.LongTensor(np.array(seg_feature)).cuda()
         kernal_verbs = torch.LongTensor(np.array(kernal_verbs)).cuda()
-        adj_matrixes = torch.FloatTensor(np.array(adj_matrixes)).cuda()
+        adj_matrixes_subjects = torch.FloatTensor(np.array(adj_matrixe_subjects)).cuda()
+        adj_matrixe_objects = torch.FloatTensor(np.array(adj_matrixe_objects)).cuda()
+        adj_matrixe_others = torch.FloatTensor(np.array(adj_matrixe_others)).cuda()
+        event_labels = torch.LongTensor(np.array(event_labels)).cuda()
 
         return text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, seg_feature, seq_tags, text_map_seg_idxs, \
-               seg_idx_map_bert_idxs, bert_idx_map_seg_idxs, seg_idx_map_texts,kernal_verbs,adj_matrixes, raw_texts
+               seg_idx_map_bert_idxs, bert_idx_map_seg_idxs, seg_idx_map_texts, kernal_verbs, \
+               adj_matrixes_subjects, adj_matrixe_objects, adj_matrixe_others,event_labels, raw_texts
 
     def encoder_sentence_seg_tag(self, sentence_seg_tag, max_sentence_len):
         encoder_matrix = []
@@ -794,6 +936,10 @@ class EEBertDataset(Dataset):
         seg_idx_map_bert_idxs = []
         bert_idx_map_seg_idxs = []
         seg_idx_map_texts = []
+        adj_matrixe_subjects = []
+        adj_matrixe_objects = []
+        adj_matrixe_others = []
+        kernal_verbs = []
         max_seq_len = len(max(datas, key=lambda x: len(x.text_token_id)).text_token_id)  # 该batch中句子的最大长度
         for data in datas:
             ids.append(data.id)
@@ -805,6 +951,20 @@ class EEBertDataset(Dataset):
             seq_lens.append(seq_len)
             mask_bert = [1] * seq_len
             mask_crf = [1] * (seq_len - 1)
+            kernal_verbs.append(data.kernal_verb + [0] * (max_seq_len - seq_len))
+
+            # subject
+            trans_adj_matrix_subject = np.zeros((max_seq_len, max_seq_len))
+            trans_adj_matrix_subject[:seq_len, :seq_len] = data.adj_matrix_subject
+            adj_matrixe_subjects.append(trans_adj_matrix_subject)
+            # object
+            trans_adj_matrix_object = np.zeros((max_seq_len, max_seq_len))
+            trans_adj_matrix_object[:seq_len, :seq_len] = data.adj_matrix_object
+            adj_matrixe_objects.append(trans_adj_matrix_object)
+            # others
+            trans_adj_matrix_other = np.zeros((max_seq_len, max_seq_len))
+            trans_adj_matrix_other[:seq_len, :seq_len] = data.adj_matrix_others
+            adj_matrixe_others.append(trans_adj_matrix_other)
 
             texts.append(data.text_token[1:])
             text_ids.append(data.text_token_id + [self.tokenizer.pad_token_id] * (max_seq_len - seq_len))  # 文本id
@@ -813,9 +973,15 @@ class EEBertDataset(Dataset):
             seg_feature.append(self.encoder_sentence_seg_tag(data.text_seg_tag, max_seq_len))
             seg_idx_map_texts.append(data.seg_idx_map_text)
 
-        text_ids = torch.LongTensor(np.array(text_ids)).to(self.device)
-        masks_bert = torch.ByteTensor(np.array(masks_bert)).to(self.device)
-        masks_crf = torch.ByteTensor(np.array(masks_crf)).to(self.device)
-        seq_lens = torch.LongTensor(np.array(seq_lens)).to(self.device)
-        seg_feature = torch.LongTensor(np.array(seg_feature)).to(self.device)
-        return ids, text_ids, seq_lens, masks_bert, masks_crf, texts, seg_feature, text_map_seg_idxs, seg_idx_map_bert_idxs, bert_idx_map_seg_idxs, seg_idx_map_texts, raw_texts
+        text_ids = torch.LongTensor(np.array(text_ids)).cuda()
+        masks_bert = torch.ByteTensor(np.array(masks_bert)).cuda()
+        masks_crf = torch.ByteTensor(np.array(masks_crf)).cuda()
+        seq_lens = torch.LongTensor(np.array(seq_lens)).cuda()
+        seg_feature = torch.LongTensor(np.array(seg_feature)).cuda()
+        kernal_verbs = torch.LongTensor(np.array(kernal_verbs)).cuda()
+        adj_matrixe_subjects = torch.FloatTensor(np.array(adj_matrixe_subjects)).cuda()
+        adj_matrixe_objects = torch.FloatTensor(np.array(adj_matrixe_objects)).cuda()
+        adj_matrixe_others = torch.FloatTensor(np.array(adj_matrixe_others)).cuda()
+        return ids, text_ids, seq_lens, masks_bert, masks_crf, texts, seg_feature, text_map_seg_idxs, \
+               seg_idx_map_bert_idxs, bert_idx_map_seg_idxs, seg_idx_map_texts, kernal_verbs, \
+               adj_matrixe_subjects, adj_matrixe_objects, adj_matrixe_others, raw_texts

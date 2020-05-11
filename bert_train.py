@@ -36,15 +36,16 @@ def roberta_train(config, class_id):
     # setup data_set instances
     data_set = config.init_obj('data_set', module_dataset, device=device)
     # setup data_loader instances
-    train_dataloader = config.init_obj('data_loader', module_dataloader, data_set.train_set,batch_size=16,
+    train_dataloader = config.init_obj('data_loader', module_dataloader, data_set.train_set, batch_size=16,
                                        collate_fn=data_set.multi_event_seq_tag_collate_fn)
-    valid_dataloader = config.init_obj('data_loader', module_dataloader, data_set.valid_set,batch_size=1,
+    valid_dataloader = config.init_obj('data_loader', module_dataloader, data_set.valid_set, batch_size=1,
                                        collate_fn=data_set.multi_event_seq_tag_collate_fn)
 
     # build model architecture, then print to console
     restrain = get_restrain_crf(device, data_set.schema.class_tag_num[class_id])
-    model = config.init_obj('model_arch', module_arch, num_tags=data_set.schema.class_tag_num[class_id],
-                            seg_vocab_size=len(data_set.seg_tag_dict), restrain=restrain)
+    model = config.init_obj('model_arch', module_arch, num_tags=data_set.schema.class_tag_num[class_id]
+                            ,event_label_num=data_set.schema.event_num[class_id],
+                            restrain=restrain)
     logger.info(model)
 
     # get function handles of loss and metrics
@@ -54,22 +55,31 @@ def roberta_train(config, class_id):
     # build optimizer, learning rate scheduler. delete every lines containing lr_scheduler for disabling scheduler
 
     bert_params = filter(lambda p: p.requires_grad, model.bert.parameters())
-    temp_params = [[*filter(lambda p:p.requires_grad,g.parameters())] for g in model.gcn]
-    gcn_params = []
-    for p in temp_params:
-        gcn_params.extend(p)
+    # rnn_params = filter(lambda p:p.requires_grad,model.rnn.parameters())
+    gcn_params = [*filter(lambda p: p.requires_grad, model.fc_gcn_in.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.fc_gcn_out.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_other_1.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_other_2.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_other_3.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_subject_1.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_subject_2.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_subject_3.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_object_1.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_object_2.parameters())] + \
+                 [*filter(lambda p: p.requires_grad, model.gcn_object_3.parameters())]
 
+    fc_bert_params = filter(lambda p: p.requires_grad, model.fc_bert.parameters())
+    fc_event_params = filter(lambda p:p.requires_grad,model.fc_event_label.parameters())
     fc_tags_params = filter(lambda p: p.requires_grad, model.fc_tags.parameters())
-    fc_bert_params = filter(lambda p:p.requires_grad,model.fc_bert.parameters())
     crf_params = filter(lambda p: p.requires_grad, model.crf.parameters())
 
     optimizer = config.init_obj('optimizer', optimization, [
         {'params': bert_params, 'lr': 2e-5, "weight_decay": 0.0001},
-        # {'params': embedding_params, 'lr': 1e-4, "weight_decay": 0.0},
-        {'params': gcn_params, 'lr': 1e-3, "weight_decay": 0.00001},
-        {'params': fc_tags_params, 'lr': 1e-3, "weight_decay": 0.00001},
-        {'params': fc_bert_params, 'lr': 1e-3, "weight_decay": 0.00001},
-        {'params': crf_params, 'lr': 5e-4, "weight_decay": 0.00001}])
+        {'params': gcn_params, 'lr': 6e-4, "weight_decay": 0.00001},
+        {'params': fc_event_params, 'lr': 7e-4, "weight_decay": 0.00001},
+        {'params': fc_tags_params, 'lr': 7e-4, "weight_decay": 0.00001},
+        {'params': fc_bert_params, 'lr': 7e-4, "weight_decay": 0.00001},
+        {'params': crf_params, 'lr': 7e-4, "weight_decay": 0.00001}])
 
     lr_scheduler = config.init_obj('lr_scheduler', optimization.optimization, optimizer,
                                    num_training_steps=int(len(train_dataloader.dataset) / train_dataloader.batch_size))
@@ -83,16 +93,17 @@ def roberta_train(config, class_id):
                           device=device,
                           lr_scheduler=lr_scheduler)
 
-    trainer.train()
+    save_dir = trainer.train()
+    return save_dir
 
 
-def run_main(config_file, class_id):
+def run_main(config_file, class_id, model_dir):
     args = argparse.ArgumentParser(description='sequence tagging')
     args.add_argument('-c', '--config', default=config_file, type=str,
                       help='config file path (default: None)')
     args.add_argument('-d', '--device', default='3', type=str,
                       help='indices of GPUs to enable (default: all)')
-    args.add_argument('-r', '--resume', default=None, type=str,
+    args.add_argument('-r', '--resume', default=model_dir, type=str,
                       help='path to latest checkpoint (default: None)')
 
     # custom cli options to modify configuration from default values given in json file.
@@ -103,17 +114,17 @@ def run_main(config_file, class_id):
     ]
     config = ConfigParser.from_args(args, options)
 
-    roberta_train(config, class_id)
+    save_dir = roberta_train(config, class_id)
+    return save_dir
 
 
 if __name__ == '__main__':
-
-    # run_main('configs/roberta_crf_0.json', 0)
-    # run_main('configs/roberta_crf_1.json', 1)
-    # run_main('configs/roberta_crf_2.json', 2)
-    # run_main('configs/roberta_crf_3.json', 3)
-    # run_main('configs/roberta_crf_4.json', 4)
-    # run_main('configs/roberta_crf_5.json', 5)
-    # run_main('configs/roberta_crf_6.json', 6)
-    run_main('configs/roberta_crf_7.json', 7)
-    run_main('configs/roberta_crf_8.json', 8)
+    run_main('configs/roberta_crf_8.json', 8, None)
+    run_main('configs/roberta_crf_2.json', 2, None)
+    run_main('configs/roberta_crf_5.json', 5, None)
+    run_main('configs/roberta_crf_0.json', 0, None)
+    run_main('configs/roberta_crf_1.json', 1, None)
+    run_main('configs/roberta_crf_6.json', 6, None)
+    run_main('configs/roberta_crf_7.json', 7, None)
+    run_main('configs/roberta_crf_3.json', 3, None)
+    run_main('configs/roberta_crf_4.json', 4, None)

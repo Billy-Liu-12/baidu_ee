@@ -2,15 +2,10 @@
   "name": "seq_label",
   "n_gpu": 1,
   "model_arch": {
-    "type": "BertRNNCRF",
+    "type": "BertGCNCRF",
     "args": {
       "bert_path": "data/pretrained_model/chinese_roberta_wwm_ext_pytorch",
       "bert_train": true,
-      "rnn_type": "lstm",
-      "hidden_dim": 128,
-      "n_layers": 2,
-      "bidirectional": true,
-      "batch_first": true,
       "dropout": 0.5
     }
   },
@@ -69,11 +64,11 @@
   },
   "trainer": {
     "epochs": 200,
-    "saved": "saved/tag/8",
+    "saved": "saved/tag_/8",
     "save_period": 2,
     "verbosity": 1,
     "monitor": "max val_F_all",
-    "early_stop": 10,
+    "early_stop": 20,
     "tensorboard": true
   }
 }

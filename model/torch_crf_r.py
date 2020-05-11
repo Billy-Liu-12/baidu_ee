@@ -345,7 +345,7 @@ class CRF(nn.Module):
         # shape: (batch_size,)
         seq_ends = mask.long().sum(dim=0) - 1
         best_tags_list = []
-
+        scores = []
         for idx in range(batch_size):
             # Find the tag which maximizes the score at the last timestep; this is our best tag
             # for the last timestep
@@ -361,5 +361,6 @@ class CRF(nn.Module):
             # Reverse the order because we start from the last timestep
             best_tags.reverse()
             best_tags_list.append(best_tags)
+            scores.append(_/len(best_tags))
 
-        return best_tags_list
+        return scores,best_tags_list

@@ -43,9 +43,9 @@ class BertTrainer(BaseTrainer):
         self.log_step = int(np.sqrt(train_iter.batch_size))
 
         # del self.optimizer.param_groups[2]
-        self.train_metrics = MetricTracker('total_loss', 'tags_loss', 'crf_loss',
+        self.train_metrics = MetricTracker('total_loss', 'tags_loss', 'crf_loss','event_loss',
                                            *[m.__name__ for m in self.metric_ftns], writer=self.writer)
-        self.valid_metrics = MetricTracker('total_loss', 'tags_loss', 'crf_loss','P_all','R_all','F_all',
+        self.valid_metrics = MetricTracker('total_loss', 'tags_loss', 'crf_loss','event_loss','P_all','R_all','F_all',
                                            *[m.__name__ for m in self.metric_ftns], writer=self.writer)
 
         # self.cross_entropy_weight_ = [1.0] * schema.class_tag_num[class_id]
@@ -53,7 +53,7 @@ class BertTrainer(BaseTrainer):
         for i in range(1, schema.class_tag_num[class_id]):
             if i % 2 == 1:
                 self.cross_entropy_weight_[i] = 1.5
-        self.cross_entropy_weight_[0] = 0.005
+        self.cross_entropy_weight_[0] = 0.01
 
     def _train_epoch(self, epoch):
         """
@@ -68,29 +68,31 @@ class BertTrainer(BaseTrainer):
         for batch_idx, batch_data in enumerate(self.train_iter):
             self.optimizer.zero_grad()
             text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, seg_feature, seq_tags, text_map_seg_idxs, \
-            seg_idx_map_bert_idxs, bert_idx_map_seg_idxs, seg_idx_map_texts,kernal_verbs,adj_matrixes, raw_texts = batch_data
-            pred_tags = self.model(text_ids, seq_lens, torch.max(seq_lens).item(),masks_bert, seg_feature,kernal_verbs,adj_matrixes,)
+            seg_idx_map_bert_idxs, bert_idx_map_seg_idxs, seg_idx_map_texts,kernal_verbs,adj_matrixes_subjects,adj_matrixe_objects,adj_matrixe_others,event_labels, raw_texts = batch_data
+            pred_tags,_ = self.model(text_ids, seq_lens, torch.max(seq_lens).item(),masks_bert, seg_feature,kernal_verbs,adj_matrixes_subjects,adj_matrixe_objects,adj_matrixe_others)
 
             # 多卡
             # crf_loss = self.model.module.crf(emissions=pred_tags, mask=masks_crf, tags=seq_tags, reduction='mean')
             # 单卡
             crf_loss = self.model.crf(emissions=pred_tags, mask=masks_crf, tags=seq_tags, reduction='mean')
             # tags_loss = self.criterion[0](pred_tags, seq_tags, self.device)
+            label_loss = F.cross_entropy(_,event_labels)
             tags_loss = cut_crossentropy_loss(pred_tags, seq_tags, self.device, cut_side=0.5,
                                               weight_=self.cross_entropy_weight_)
-            loss = tags_loss + crf_loss
+            loss = tags_loss + crf_loss + label_loss
             loss.backward()
             self.optimizer.step()
 
             self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
             self.train_metrics.update('tags_loss', tags_loss.item())
+            self.train_metrics.update('event_loss', label_loss.item())
             self.train_metrics.update('crf_loss', crf_loss.item())
             self.train_metrics.update('total_loss', loss.item())
 
             # 多卡
             # best_path = self.model.module.crf.decode(emissions=pred_tags, mask=masks_crf)
             # 单卡
-            best_path = self.model.crf.decode(emissions=pred_tags, mask=masks_crf)
+            scores,best_path = self.model.crf.decode(emissions=pred_tags, mask=masks_crf)
             X, Y, Z = self.evaluate(best_path, texts, arguments, text_map_seg_idxs, seg_idx_map_bert_idxs,
                                     bert_idx_map_seg_idxs, seg_idx_map_texts, raw_texts)
             for met in self.metric_ftns:
@@ -127,7 +129,6 @@ class BertTrainer(BaseTrainer):
         """
 
         self.model.eval()
-        # self.model.crf.eval()
         self.valid_metrics.reset()
         with torch.no_grad():
             X_all = 0.
@@ -136,27 +137,29 @@ class BertTrainer(BaseTrainer):
 
             for batch_idx, batch_data in enumerate(self.valid_iter):
                 text_ids, seq_lens, masks_bert, masks_crf, texts, arguments, seg_feature, seq_tags, text_map_seg_idxs, \
-                seg_idx_map_bert_idxs, bert_idx_map_seg_idxs, seg_idx_map_texts,kernal_verbs,adj_matrixes, raw_texts = batch_data
+                seg_idx_map_bert_idxs, bert_idx_map_seg_idxs, seg_idx_map_texts,kernal_verbs,adj_matrixes_subjects,adj_matrixe_objects,adj_matrixe_others,event_labels, raw_texts = batch_data
 
                 # context, seq_len, mask_bert,mask_crf,class_label,event_label,seq_tags
-                pred_tags = self.model(text_ids, seq_lens, torch.max(seq_lens).item(), masks_bert, seg_feature,kernal_verbs,adj_matrixes,)
+                pred_tags,_ = self.model(text_ids, seq_lens, torch.max(seq_lens).item(), masks_bert, seg_feature,kernal_verbs,adj_matrixes_subjects,adj_matrixe_objects,adj_matrixe_others)
 
                 # 多卡
                 # crf_loss = self.model.module.crf(emissions=pred_tags, mask=masks_crf, tags=seq_tags, reduction='mean')
                 # 单卡
                 crf_loss = self.model.crf(emissions=pred_tags, mask=masks_crf, tags=seq_tags, reduction='mean')
+                label_loss = F.cross_entropy(_,event_labels)
                 tags_loss = cut_crossentropy_loss(pred_tags, seq_tags, self.device, cut_side=0.2,
                                                   weight_=self.cross_entropy_weight_)
 
-                loss = tags_loss + crf_loss
+                loss = tags_loss + crf_loss+label_loss
                 self.writer.set_step((epoch - 1) * len(self.valid_iter) + batch_idx, 'valid')
                 self.valid_metrics.update('tags_loss', tags_loss.item())
+                self.valid_metrics.update('event_loss', label_loss.item())
                 self.valid_metrics.update('crf_loss', crf_loss.item())
                 self.valid_metrics.update('total_loss', loss.item())
                 # 多卡
                 # best_path = self.model.module.crf.decode(emissions=pred_tags, mask=masks_crf)
                 # 单卡
-                best_path = self.model.crf.decode(emissions=pred_tags, mask=masks_crf)
+                scores,best_path = self.model.crf.decode(emissions=pred_tags, mask=masks_crf)
                 X, Y, Z = self.evaluate(best_path, texts, arguments, text_map_seg_idxs, seg_idx_map_bert_idxs,
                                         bert_idx_map_seg_idxs, seg_idx_map_texts, raw_texts)
                 X_all += X
@@ -169,8 +172,8 @@ class BertTrainer(BaseTrainer):
                 f1 = 2 * X / (Y + Z)
                 if epoch > -1 and f1 < 0.5:
                     # chance = math.tanh((0.5 - f1) / f1)
-                    for text, path, gold_argument, text_map_seg_idx, seg_idx_map_bert_idx, bert_idx_map_seg_idx, seg_idx_map_text, raw_text in zip(
-                            texts, best_path, arguments, text_map_seg_idxs, seg_idx_map_bert_idxs,
+                    for text, score,path, gold_argument, text_map_seg_idx, seg_idx_map_bert_idx, bert_idx_map_seg_idx, seg_idx_map_text, raw_text in zip(
+                            texts,scores, best_path, arguments, text_map_seg_idxs, seg_idx_map_bert_idxs,
                             bert_idx_map_seg_idxs, seg_idx_map_texts, raw_texts):
                         pred_argument = bert_extract_arguments(text, path, self.schema, class_id=self.class_id,
                                                                text_map_seg_idx=text_map_seg_idx,
@@ -189,14 +192,8 @@ class BertTrainer(BaseTrainer):
                                     'argument': k
                                 }]
                             })
-                        # print('*'*20+'p:{},  r:{},  f:{}'.format(precision,recall,f1)+'*'*20)
-                        # print('text:{}'.format(''.join(text)))
-                        # print('event_list:{}'.format(event_list))
-                        # print('gold_argument:{}'.format(str([{'role': v[1], 'argument': k.split('_')[0]} for k, v in gold_argument.items()])))
-                        # print('pred_argument:{}'.format(str(temp_argument)))
-                        # print('#'*40)
-                        log_f.write('epoch:{}'.format(epoch)+'*'*20+'p:{},  r:{},  f:{}'.format(precision,recall,f1)+'*'*20+'\n')
-                        log_f.write('text:{}'.format(''.join(text))+'\n')
+                        log_f.write('epoch:{}'.format(epoch)+'*'*20+'p:{},  r:{},  f:{}, score:{}'.format(precision,recall,f1,score)+'*'*20+'\n')
+                        log_f.write('text:{}'.format(raw_text)+'\n')
                         # log_f.write('event_list:{}'.format(event_list)+'\n')
                         log_f.write('gold_argument:{}'.format(str([{'role': v[1], 'argument': k.split('_')[0]} for k, v in gold_argument.items()]))+'\n')
                         log_f.write('pred_argument:{}'.format(str(temp_argument))+'\n')
@@ -258,6 +255,35 @@ class BertTrainer(BaseTrainer):
                     r = l / z + 0.000001
                     f1 = 2*p*r/(p+r)
                     X += f1
+        # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
+
+        return X, Y, Z
+
+    def train_evaluate(self, batch_pred_tag, batch_text, batch_arguments, text_map_seg_idxs, seg_idx_map_bert_idxs,
+                 bert_idx_map_seg_idxs, seg_idx_map_texts, raw_texts):
+        """评测函数（跟官方评测结果不一定相同，但很接近）
+        """
+
+        X, Y, Z = 1e-10, 1e-10, 1e-10
+
+        for pred_tag, text, arguments, text_map_seg_idx, seg_idx_map_bert_idx, bert_idx_map_seg_idx, seg_idx_map_text, raw_text in zip(
+                batch_pred_tag, batch_text, batch_arguments, text_map_seg_idxs, seg_idx_map_bert_idxs,
+                bert_idx_map_seg_idxs, seg_idx_map_texts, raw_texts):
+
+            inv_arguments_label = {v: k for k, v in arguments.items()}
+            pred_arguments = bert_extract_arguments(text, pred_tag, self.schema, class_id=self.class_id,
+                                                    text_map_seg_idx=text_map_seg_idx,
+                                                    seg_idx_map_bert_idx=seg_idx_map_bert_idx,
+                                                    bert_idx_map_seg_idx=bert_idx_map_seg_idx,
+                                                    seg_idx_map_text=seg_idx_map_text, raw_text=raw_text)
+            pred_inv_arguments = {v: k for k, v in pred_arguments.items()}
+            Y += len(pred_inv_arguments)
+            Z += len(inv_arguments_label)
+            for k, v in pred_inv_arguments.items():
+                if k in inv_arguments_label:
+                    # 用最长公共子串作为匹配程度度量
+                    l = pylcs.lcs(v, inv_arguments_label[k])
+                    X += 2. * l / (len(v) + len(inv_arguments_label[k]))
         # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
 
         return X, Y, Z

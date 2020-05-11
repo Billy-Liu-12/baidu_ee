@@ -12,6 +12,7 @@ from .torch_crf_r import CRF
 import numpy as np
 import torch.nn.functional as F
 
+
 class RnnModel(BaseModel):
     def __init__(self, rnn_type, word_embedding, hidden_dim, output_dim, n_layers,
                  bidirectional, dropout, batch_first=False, use_pretrain_embedding=False):
@@ -197,7 +198,7 @@ class multi_class_Attention(nn.Module):
 
 
 class BertRNNCRF(nn.Module):
-    def __init__(self, num_tags, rnn_type, bert_path, bert_train, seg_vocab_size,hidden_dim, n_layers, bidirectional, batch_first,
+    def __init__(self, num_tags, rnn_type, bert_path, bert_train, hidden_dim, n_layers, bidirectional, batch_first,
                  dropout, restrain):
         super(BertRNNCRF, self).__init__()
         self.rnn_type = rnn_type.lower()
@@ -239,58 +240,38 @@ class BertRNNCRF(nn.Module):
         else:
             self.fc_tags = nn.Linear(hidden_dim, num_tags)
 
-        self.steps_of_gcn = 3
-        self.gcn = []
-        for i in range(self.steps_of_gcn):
-            self.gcn.append(
-                nn.Sequential(
-                    nn.Linear(256,256),
-                    nn.ReLU()
-                ).cuda()
-            )
+        self.fc_bert = nn.Linear(self.bert.config.to_dict()['hidden_size'], 256)
 
-
-
-        self.fc_bert = nn.Linear(self.bert.config.to_dict()['hidden_size'],256)
-
-    def forward(self, context, seq_len,max_seq_len, mask_bert,seg_feature,kernal_verbs,adj_matrixes):
+    def forward(self, context, seq_len, max_seq_len, mask_bert):
         # context    输入的句子
         # mask  对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
         #
         # batch_size = context.shape[0]
         # context = torch.reshape(context, [-1, context.shape[-1]])
         # mask = torch.reshape(mask_bert, [-1, mask_bert.shape[-1]])
-        bert_sentence, bert_cls = self.bert(context, attention_mask=mask_bert,token_type_ids=kernal_verbs)
+        bert_sentence, bert_cls = self.bert(context, attention_mask=mask_bert)
         sentence_len = bert_sentence.shape[1]
 
         bert_cls = bert_cls.unsqueeze(dim=1).repeat(1, sentence_len, 1)
         bert_sentence = bert_sentence + bert_cls
         bert_out = F.relu(self.fc_bert(bert_sentence))
 
-        # encoder_out, sorted_seq_lengths, desorted_indices = self.prepare_pack_padded_sequence(bert_sentence, seq_len)
-        #
-        # # pack sequence
-        # packed_embedded = nn.utils.rnn.pack_padded_sequence(encoder_out, sorted_seq_lengths,
-        #                                                     batch_first=self.batch_first)
-        # # self.rnn.flatten_parameters()
-        # if self.rnn_type in ['rnn', 'gru']:
-        #     packed_output, hidden = self.rnn(packed_embedded)
-        # else:
-        #     packed_output, (hidden, cell) = self.rnn(packed_embedded)
+        encoder_out, sorted_seq_lengths, desorted_indices = self.prepare_pack_padded_sequence(bert_sentence, seq_len)
+
+        # pack sequence
+        packed_embedded = nn.utils.rnn.pack_padded_sequence(encoder_out, sorted_seq_lengths,
+                                                            batch_first=self.batch_first)
+        if self.rnn_type in ['rnn', 'gru']:
+            packed_output, hidden = self.rnn(packed_embedded)
+        else:
+            packed_output, (hidden, cell) = self.rnn(packed_embedded)
         # unpack sequence
         # output = [ batch size,sent len, hidden_dim * bidirectional]
-        # output, output_lengths = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=self.batch_first)
-        # output = output[desorted_indices]
-        output = bert_out
-        for i in range(self.steps_of_gcn):
-            hidden = torch.bmm(adj_matrixes,output)
-
-            hidden = self.gcn[i](self.dropout(hidden))
-            output = hidden + output
+        output, output_lengths = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=self.batch_first)
+        output = output[desorted_indices]
 
         # output = torch.cat([bert_out,output],dim=2)
         out = self.fc_tags(self.dropout(output))
-
 
         return out[:, 1:, :]
 
@@ -306,6 +287,74 @@ class BertRNNCRF(nn.Module):
         _, desorted_indices = torch.sort(indices, descending=False)
         sorted_inputs_words = inputs_words[indices]
         return sorted_inputs_words, sorted_seq_lengths, desorted_indices
+
+
+class BertGCNCRF(nn.Module):
+    def __init__(self, num_tags,event_label_num, bert_path, bert_train, dropout, restrain):
+        super(BertGCNCRF, self).__init__()
+        self.bert = BertModel.from_pretrained(bert_path)
+        # 对bert进行训练
+        for name, param in self.bert.named_parameters():
+            param.requires_grad = bert_train
+        self.crf = CRF(num_tags, batch_first=True, restrain_matrix=restrain, loss_side=3)
+        self.dropout = nn.Dropout(dropout)
+
+        self.fc_gcn_in = nn.Linear(self.bert.config.to_dict()['hidden_size'], 256)
+        self.fc_gcn_out = nn.Linear(256, 128)
+
+        self.gcn_other_1 = nn.Sequential(nn.Linear(256, 256), nn.ReLU())
+        self.gcn_other_2 = nn.Sequential(nn.Linear(256, 256), nn.ReLU())
+        self.gcn_other_3 = nn.Sequential(nn.Linear(256, 128), nn.ReLU())
+
+        self.gcn_subject_1 = nn.Sequential(nn.Linear(256, 256), nn.ReLU())
+        self.gcn_subject_2 = nn.Sequential(nn.Linear(256, 256), nn.ReLU())
+        self.gcn_subject_3 = nn.Sequential(nn.Linear(256, 128), nn.ReLU())
+
+        self.gcn_object_1 = nn.Sequential(nn.Linear(256, 256), nn.ReLU())
+        self.gcn_object_2 = nn.Sequential(nn.Linear(256, 256), nn.ReLU())
+        self.gcn_object_3 = nn.Sequential(nn.Linear(256, 128), nn.ReLU())
+
+        self.fc_bert = nn.Linear(self.bert.config.to_dict()['hidden_size'], 128)
+
+        self.fc_tags = nn.Linear(256+128, num_tags)
+        self.fc_event_label = nn.Linear(self.bert.config.to_dict()['hidden_size'],event_label_num)
+
+    def forward(self, context, seq_len, max_seq_len, mask_bert, seg_feature, kernal_verbs, adj_matrixes_subjects,
+                adj_matrixes_objects, adj_matrixes_others):
+        # context    输入的句子
+        # mask  对padding部分进行mask，和句子一个size，padding部分用0表示，如：[1, 1, 1, 1, 0, 0]
+        bert_sentence, bert_cls = self.bert(context, attention_mask=mask_bert, token_type_ids=kernal_verbs)
+
+        pred_event = self.fc_event_label(bert_cls)
+        sentence_len = bert_sentence.shape[1]
+        bert_cls = bert_cls.unsqueeze(dim=1).repeat(1, sentence_len, 1)
+        bert_sentence = bert_sentence + bert_cls
+
+        ###################### GCN ####################################
+        gcn_in = self.dropout(self.fc_gcn_in(bert_sentence))
+
+        # 1
+        hidden_other = self.gcn_other_1(torch.bmm(adj_matrixes_others, gcn_in))
+        hidden_subject = self.gcn_subject_1(torch.bmm(adj_matrixes_subjects, gcn_in))
+        hidden_object = self.gcn_object_1(torch.bmm(adj_matrixes_objects, gcn_in))
+        gcn_output = self.dropout(hidden_object + hidden_other + hidden_subject + gcn_in)
+        # 2
+        hidden_other = self.gcn_other_2(torch.bmm(adj_matrixes_others, gcn_output))
+        hidden_subject = self.gcn_subject_2(torch.bmm(adj_matrixes_subjects, gcn_output))
+        hidden_object = self.gcn_object_2(torch.bmm(adj_matrixes_objects, gcn_output))
+        gcn_output = self.dropout(hidden_object + hidden_other + hidden_subject + gcn_output)
+        # 3
+        hidden_other = self.gcn_other_3(torch.bmm(adj_matrixes_others, gcn_output))
+        hidden_subject = self.gcn_subject_3(torch.bmm(adj_matrixes_subjects, gcn_output))
+        hidden_object = self.gcn_object_3(torch.bmm(adj_matrixes_objects, gcn_output))
+
+        gcn_hidden = hidden_object + hidden_other + hidden_subject
+
+        bert_out = self.fc_bert(bert_sentence)
+        out = self.dropout(self.fc_tags(torch.cat([gcn_hidden, self.fc_gcn_out(gcn_output),bert_out], dim=2)))
+
+        return out[:, 1:, :],pred_event
+
 
 
 class RNN(nn.Module):
